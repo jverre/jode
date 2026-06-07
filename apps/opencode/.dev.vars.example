@@ -1,0 +1,23 @@
+# Local dev secrets for `wrangler dev`. Copy to `.dev.vars` (gitignored) and fill in.
+# In production these are set via `wrangler secret put` (the non-secret bits live
+# in wrangler.toml [vars]).
+
+# Local dev: skip Cloudflare Access verification so the desktop webview can load
+# the agent under `wrangler dev` (you can't mint a real Access JWT locally). This
+# is read ONLY here — never put it in wrangler.toml [vars] / production.
+ACCESS_DEV_BYPASS="true"
+
+# Cloudflare Access — only used when ACCESS_DEV_BYPASS is not "true".
+ACCESS_TEAM_DOMAIN="https://YOUR-TEAM.cloudflareaccess.com"
+ACCESS_AUD="REPLACE_WITH_ACCESS_APPLICATION_AUD_TAG"
+ALLOWED_EMAIL="jacques@comet.com"
+
+# Model provider key(s) the agent uses inside the container.
+ANTHROPIC_API_KEY="sk-ant-..."
+# OPENAI_API_KEY="sk-..."
+
+# R2 (S3 API) for /workspace persistence. Create an R2 API token in the dashboard
+# (R2 → Manage API Tokens). Leave blank to run with an ephemeral workspace.
+R2_ENDPOINT="https://YOUR_ACCOUNT_ID.r2.cloudflarestorage.com"
+R2_ACCESS_KEY_ID=""
+R2_SECRET_ACCESS_KEY=""

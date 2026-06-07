@@ -43,7 +43,7 @@ export function AgentItem({ id, name, active, status, onSelect }: AgentItemProps
     >
       <span
         style={{ width: ICON_CELL, height: ICON_CELL }}
-        className="flex shrink-0 items-center justify-center"
+        className="relative flex shrink-0 items-center justify-center"
       >
         <img
           src={LOGOS[id]}
@@ -52,6 +52,17 @@ export function AgentItem({ id, name, active, status, onSelect }: AgentItemProps
           style={{ width: ICON_SIZE, height: ICON_SIZE }}
           className={cn('select-none object-contain', status === 'loading' && 'animate-pulse')}
         />
+        {/* Status dot: amber = needs Cloudflare Access sign-in, red = error.
+            ready/loading/idle show nothing. */}
+        {(status === 'login' || status === 'error') && (
+          <span
+            aria-hidden
+            className={cn(
+              'absolute right-1.5 top-1.5 h-2 w-2 rounded-full ring-2 ring-background',
+              status === 'login' ? 'bg-amber-500' : 'bg-red-500'
+            )}
+          />
+        )}
       </span>
     </button>
   )

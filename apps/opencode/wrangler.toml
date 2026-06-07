@@ -1,0 +1,60 @@
+name = "jode-opencode"
+main = "src/index.ts"
+compatibility_date = "2026-05-31"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+preview_urls = true
+
+# Cloudflare Access gate config (non-secret). The Worker verifies the Access JWT
+# against these on every request — including the WebSocket upgrade — via @jode/auth.
+# Same single-email Zero Trust model as @jode/claude-code. Set these to your team
+# domain, the Access application's AUD tag, and the single allowed email.
+[vars]
+ACCESS_TEAM_DOMAIN = "https://YOUR-TEAM.cloudflareaccess.com"
+ACCESS_AUD = "REPLACE_WITH_ACCESS_APPLICATION_AUD_TAG"
+ALLOWED_EMAIL = "jacques@comet.com"
+
+# Workspace persistence (non-secret). The container reads/writes /workspace to R2
+# via R2's S3-compatible API (see scripts/entrypoint.sh) — a Worker R2 binding
+# can't reach inside a container, so the sync uses S3 creds set as Worker secrets
+# (R2_ENDPOINT / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY).
+R2_BUCKET = "jode-opencode-workspace"
+WORKSPACE_KEY = "default/workspace.tar.zst"
+CHECKPOINT_INTERVAL = "300"
+
+[observability]
+enabled = true
+
+  [observability.logs]
+  enabled = true
+  invocation_logs = true
+  head_sampling_rate = 1
+
+# The persistent workspace bucket. Bound for Worker-side ops (listing/pruning
+# snapshots); the in-container sync uses the S3 API with the secrets above.
+[[r2_buckets]]
+binding = "WORKSPACE"
+bucket_name = "jode-opencode-workspace"
+
+[[containers]]
+class_name = "OpencodeContainer"
+image = "./Dockerfile"
+# 1 instance: a single container serves ALL clients on one shared /workspace, so
+# every connection sees the same files and session state. Multi-tenant (per-user
+# container keyed off the Access email) is a later step — see README.
+max_instances = 1
+
+  [containers.instance_type]
+  # The agent runs installs/builds/tests inside the container — give it real
+  # resources. Tune to your workload / account limits.
+  vcpu = 4
+  memory_mib = 8_192
+  disk_mb = 16_000
+
+[[durable_objects.bindings]]
+name = "OPENCODE"
+class_name = "OpencodeContainer"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["OpencodeContainer"]

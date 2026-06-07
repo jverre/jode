@@ -1,0 +1,57 @@
+name = "jode-claude-code"
+main = "src/index.ts"
+compatibility_date = "2026-05-31"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+preview_urls = true
+
+# Cloudflare Access gate config (non-secret). The Worker verifies the Access JWT
+# against these on every request — see @jode/auth + apps/claude-code/README.md.
+# Set these to your team domain, the Access application's AUD tag, and the single
+# allowed email. BRIDGE_KEY is NOT here — it's a secret: `wrangler secret put BRIDGE_KEY`.
+[vars]
+ACCESS_TEAM_DOMAIN = "https://YOUR-TEAM.cloudflareaccess.com"
+ACCESS_AUD = "REPLACE_WITH_ACCESS_APPLICATION_AUD_TAG"
+ALLOWED_EMAIL = "jacques@comet.com"
+
+[observability]
+enabled = true
+
+  [observability.logs]
+  enabled = true
+  invocation_logs = true
+  head_sampling_rate = 1
+
+[assets]
+# The rehosted renderer's static assets. Produced by `npm run build:payload`
+# (regenerated from /Applications/Claude.app; gitignored). The Worker injects the
+# bridge-client into index.html and intercepts SPA routes.
+directory = "payload/linux-rehost/app/resources/ion-dist"
+binding = "ASSETS"
+not_found_handling = "none"
+# Run the Worker BEFORE static-asset serving so it can inject the bridge-client
+# into index.html and intercept SPA routes (otherwise CF serves the raw asset
+# index.html — with the stale mock shim — and bypasses the Worker).
+run_worker_first = true
+
+[[containers]]
+class_name = "ClaudeBridgeContainer"
+image = "./Dockerfile"
+# 1 instance: a single container serves ALL clients (WS + HTTP + diagnostics), so
+# the browser, bridge, and /debug-rpc are guaranteed consistent. With 2, requests
+# could land on different containers — making round-trip bugs appear/vanish per
+# connection and RPCs invisible to /debug-rpc.
+max_instances = 1
+
+  [containers.instance_type]
+  vcpu = 4
+  memory_mib = 12_288
+  disk_mb = 20_000
+
+[[durable_objects.bindings]]
+name = "CLAUDE_BRIDGE"
+class_name = "ClaudeBridgeContainer"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ClaudeBridgeContainer"]

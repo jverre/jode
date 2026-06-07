@@ -1,12 +1,13 @@
 # jode — Implementation Plans (June 2026)
 
-Three plans, in dependency order:
+Four plans, in dependency order:
 
 | Plan | Covers |
 |------|--------|
 | [`01-repo-architecture.md`](./01-repo-architecture.md) | Monorepo layout — `apps/desktop`, `apps/cloudflare`, and shared `packages/` (protocol, sync, agents, auth) |
 | [`02-cloudflare-claude-code.md`](./02-cloudflare-claude-code.md) | Claude Code served as a **web UI** from Cloudflare — Worker + Durable Object + Container, headless-Electron relay bridge, Zero Trust single-email auth |
 | [`03-electron-app.md`](./03-electron-app.md) | The desktop shell — a browser shell that **renders each agent's remote web UI in a web view**, with a workspace switcher, Access login, and local sync daemon |
+| [`04-cloudflare-codex.md`](./04-cloudflare-codex.md) | The **Codex** desktop app hosted on Cloudflare via the **same rehost path as Claude Code** (headless Electron + `/bridge` relay + SPA injection), plus the OpenAI-specific swaps (upstream, auth, the `codex` CLI runtime dep) and R2-persisted `/workspace` |
 
 ## The serving model (important)
 

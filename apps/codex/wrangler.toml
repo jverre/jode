@@ -1,0 +1,69 @@
+name = "jode-codex"
+main = "src/index.ts"
+compatibility_date = "2026-05-31"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+preview_urls = true
+
+# Cloudflare Access gate config (non-secret). The Worker verifies the Access JWT
+# against these on every request — see @jode/auth + apps/codex/README.md.
+# Set these to your team domain, the Access application's AUD tag, and the single
+# allowed email. BRIDGE_KEY is NOT here — it's a secret: `wrangler secret put BRIDGE_KEY`.
+[vars]
+ACCESS_TEAM_DOMAIN = "https://YOUR-TEAM.cloudflareaccess.com"
+ACCESS_AUD = "REPLACE_WITH_ACCESS_APPLICATION_AUD_TAG"
+ALLOWED_EMAIL = "jacques@comet.com"
+
+# Workspace persistence (non-secret) — same R2 snapshot model as @jode/opencode.
+# The container tars /workspace to R2 via the S3 API; the R2_* creds are secrets.
+R2_BUCKET = "jode-codex-workspace"
+WORKSPACE_KEY = "default/workspace.tar.zst"
+CHECKPOINT_INTERVAL = "300"
+
+[observability]
+enabled = true
+
+  [observability.logs]
+  enabled = true
+  invocation_logs = true
+  head_sampling_rate = 1
+
+[assets]
+# The rehosted Codex renderer (the `webview/` SPA in app.asar). Produced by
+# `npm run build:payload` (regenerated from /Applications/Codex.app; gitignored).
+# The Worker injects the bridge-client into index.html and intercepts SPA routes.
+directory = "payload/linux-rehost/app/webview"
+binding = "ASSETS"
+not_found_handling = "none"
+# Run the Worker BEFORE static-asset serving so it can inject the bridge-client
+# into index.html and intercept SPA routes (otherwise CF serves the raw asset
+# index.html and bypasses the Worker).
+run_worker_first = true
+
+# The persistent workspace bucket. Bound for Worker-side ops (listing/pruning
+# snapshots); the in-container sync uses the S3 API with the R2_* secrets.
+[[r2_buckets]]
+binding = "WORKSPACE"
+bucket_name = "jode-codex-workspace"
+
+[[containers]]
+class_name = "CodexBridgeContainer"
+image = "./Dockerfile"
+# 1 instance: a single container serves ALL clients (WS + HTTP + diagnostics), so
+# the browser, bridge, and /debug-rpc are guaranteed consistent. With 2, requests
+# could land on different containers — making round-trip bugs appear/vanish per
+# connection and RPCs invisible to /debug-rpc.
+max_instances = 1
+
+  [containers.instance_type]
+  vcpu = 4
+  memory_mib = 12_288
+  disk_mb = 20_000
+
+[[durable_objects.bindings]]
+name = "CODEX_BRIDGE"
+class_name = "CodexBridgeContainer"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["CodexBridgeContainer"]

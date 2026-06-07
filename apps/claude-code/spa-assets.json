@@ -1,0 +1,20 @@
+{
+  "_comment": "Current claude.ai SPA asset manifest, captured from the live app via CDP (node ipc-mock/cdp.mjs). Lets the dev-server serve the SAME bundle the real desktop app loads, instead of the stale local ion-dist. Refresh when claude.ai redeploys: re-run the head-probe and update build/script/css.",
+  "build": "6727e61224",
+  "htmlAttrs": "lang=\"en-US\" class=\"h-screen antialiased scroll-smooth\" data-build-id=\"6727e61224\" data-color-version=\"v2\" data-theme=\"claude\" data-mode=\"light\" data-version=\"1.0.0\"",
+  "bodyClass": "bg-bg-100 text-text-100 font-ui min-h-screen chat-ui-core",
+  "cdnBase": "https://assets-proxy.anthropic.com/claude-ai/v2/assets/v1/",
+  "script": "index-C3KNLPH2.js",
+  "css": [
+    "cc8728789-D_SWcLm6.css",
+    "cf8dbbbdb-o73uZ2YJ.css",
+    "c6a992d55-C701z7cr.css",
+    "cf1a02a1a-CnIZRMjU.css",
+    "cded40f2a-FWJX77zY.css",
+    "cfcbb3627-BN1_o_ME.css",
+    "c42011864-C5vT29Ee.css",
+    "cbc59a8af-N7TVSs6K.css",
+    "c5610fbe3-QqEKmTUg.css",
+    "c6bf19e8f-BWR8DiQb.css"
+  ]
+}

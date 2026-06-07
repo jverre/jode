@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "es2022",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "lib": ["es2022"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "declaration": true,
+    "baseUrl": ".",
+    "paths": {
+      "@jode/protocol": ["packages/protocol/src/index.ts"],
+      "@jode/sync": ["packages/sync/src/index.ts"],
+      "@jode/agents": ["packages/agents/src/index.ts"],
+      "@jode/auth": ["packages/auth/src/index.ts"]
+    }
+  }
+}

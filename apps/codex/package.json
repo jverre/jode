@@ -1,0 +1,26 @@
+{
+  "name": "@jode/codex",
+  "private": true,
+  "type": "module",
+  "description": "jode remote environment — Worker + Durable Object + Container serving the OpenAI Codex desktop app's web UI, via the same headless-Electron rehost + /bridge relay as @jode/claude-code (see plan 04).",
+  "scripts": {
+    "build:payload": "node scripts/build-payload.mjs",
+    "gen": "node scripts/gen-assets.mjs",
+    "prebuild": "node scripts/gen-assets.mjs",
+    "predeploy": "node scripts/gen-assets.mjs",
+    "deploy": "wrangler deploy",
+    "dry-run": "node scripts/gen-assets.mjs && wrangler deploy --dry-run",
+    "dev": "node scripts/gen-assets.mjs && wrangler dev --port 8789 --inspector-port 9231",
+    "tail": "wrangler tail",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cloudflare/containers": "^0.0.21",
+    "@jode/auth": "*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260603.1",
+    "typescript": "^5.9.0",
+    "wrangler": "^4.20.0"
+  }
+}
