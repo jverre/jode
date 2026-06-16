@@ -46,6 +46,13 @@ log "electron package version=${ELECTRON_PKG_VERSION}"
 log "app package version=${APP_PKG_VERSION}"
 phase "entrypoint:environment" "versions recorded"
 
+# Mount the SHARED jode filesystem (one R2 bucket, FUSE) at /workspace BEFORE
+# anything launches — all tools (claude-code, opencode, codex) see the same live
+# files. No-op (local ephemeral dir) when R2 creds are absent.
+phase "entrypoint:workspace:mount" "mounting shared R2 filesystem"
+MOUNT_LOG_DIR=/tmp/codex-rehost /opt/cloudflare/mount-workspace.sh || true
+phase "entrypoint:workspace:done" "mount-workspace finished"
+
 mkdir -p /root/.vnc
 chmod 700 /root/.vnc
 
@@ -89,6 +96,15 @@ echo "${HEALTH_PID}" >/tmp/codex-rehost/health-server.pid
 log "health server pid=${HEALTH_PID}"
 phase "entrypoint:health-server:ready" "pid=${HEALTH_PID}"
 
+# OAuth login-callback forwarder: 0.0.0.0:1456 → 127.0.0.1:1455 (the app-server's
+# one-shot ChatGPT login server binds loopback only). See login-callback-proxy.mjs.
+log "starting login-callback proxy"
+node /opt/cloudflare/login-callback-proxy.mjs >/tmp/codex-rehost/login-callback-proxy.log 2>&1 &
+LOGIN_PROXY_PID=$!
+echo "${LOGIN_PROXY_PID}" >/tmp/codex-rehost/login-callback-proxy.pid
+log "login-callback proxy pid=${LOGIN_PROXY_PID}"
+phase "entrypoint:login-proxy:ready" "pid=${LOGIN_PROXY_PID}"
+
 log "starting KasmVNC session"
 phase "entrypoint:kasmvnc:start" "launching VNC server"
 vncserver "${KASMVNC_DISPLAY}" \
@@ -105,7 +121,9 @@ phase "entrypoint:kasmvnc:spawned" "pid=${KASMVNC_PID}"
 
 cleanup() {
   phase "entrypoint:cleanup" "stopping child processes"
-  kill "${HEALTH_PID}" "${KASMVNC_PID}" 2>/dev/null || true
+  kill "${HEALTH_PID}" "${KASMVNC_PID}" "${LOGIN_PROXY_PID}" 2>/dev/null || true
+  # Unmount the shared filesystem so tigrisfs flushes its write-back cache.
+  fusermount -u /workspace 2>/dev/null || umount /workspace 2>/dev/null || true
 }
 
 trap cleanup EXIT INT TERM

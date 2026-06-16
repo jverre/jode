@@ -33,7 +33,19 @@ export function App(): JSX.Element {
   }
 
   return (
-    <div className="region-drag relative h-screen w-screen overflow-hidden">
+    <div className="relative h-screen w-screen overflow-hidden">
+      {/* Draggable title-bar strip across the very top: `-webkit-app-region: drag`
+          lets the window be moved (and double-click zoom works natively). This is
+          the standard custom-title-bar approach and is safe here because the
+          window uses `titleBarStyle: 'hidden'` rather than 'hiddenInset' — the
+          latter + a child WebContentsView is the Electron bug (electron#26114)
+          that made the agent panes unclickable. Height = TITLEBAR_HEIGHT so the
+          strip never overlaps a pane (their y-origin starts here). */}
+      <div
+        className="region-drag absolute left-0 top-0"
+        style={{ right: 0, height: TITLEBAR_HEIGHT }}
+      />
+
       {/* Bordered frame for the agent pane. The native WebContentsView floats 1px
           inside it, so only this frame's border shows — a light ring around the
           pane that the active tab merges into. */}

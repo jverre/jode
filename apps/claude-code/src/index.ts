@@ -32,10 +32,14 @@ type Env = {
   /** Local-dev only: set to "true" in .dev.vars to skip Access verification.
    *  NEVER set in wrangler.toml [vars] — production must always verify. */
   ACCESS_DEV_BYPASS?: string;
-  // ── Worker→container hop ──
-  /** Secret shared with the in-container bridge, injected via envVars below.
-   *  Defense-in-depth on the already-private DO binding; NOT user auth. */
-  BRIDGE_KEY: string;
+  // ── Shared filesystem (injected via envVars) ──
+  /** S3 creds for the SHARED jode filesystem (one R2 bucket FUSE-mounted at
+   *  /workspace by every tool — claude-code, opencode, codex). Endpoint e.g.
+   *  https://<ACCOUNT_ID>.r2.cloudflarestorage.com. Secrets. */
+  R2_ENDPOINT?: string;
+  R2_ACCESS_KEY_ID?: string;
+  R2_SECRET_ACCESS_KEY?: string;
+  R2_BUCKET?: string;
 };
 
 export class ClaudeBridgeContainer extends Container {
@@ -44,12 +48,20 @@ export class ClaudeBridgeContainer extends Container {
   private cleared = false;
 
   override async fetch(request: Request): Promise<Response> {
-    // Propagate the bridge secret into the container BEFORE it starts, so it
-    // lives only as a Worker secret (`wrangler secret put BRIDGE_KEY`) — never
-    // hardcoded in source or baked into the image. bridge.cjs reads
-    // process.env.BRIDGE_KEY. Set before startAndWaitForPorts (no-op once running).
+    // Inject the shared-filesystem mount creds into the container BEFORE it
+    // starts (set before startAndWaitForPorts — a no-op once running). There is
+    // no bridge key: the bridge is reachable only via this Worker's private DO
+    // binding, and the Worker verifies Cloudflare Access on every request first.
     const env = this.env as Env;
-    if (env.BRIDGE_KEY) this.envVars = { ...this.envVars, BRIDGE_KEY: env.BRIDGE_KEY };
+    this.envVars = {
+      ...this.envVars,
+      // Shared filesystem mount creds (see mount-workspace.sh). Empty → the
+      // container runs with a local, ephemeral /workspace.
+      R2_ENDPOINT: env.R2_ENDPOINT ?? "",
+      R2_ACCESS_KEY_ID: env.R2_ACCESS_KEY_ID ?? "",
+      R2_SECRET_ACCESS_KEY: env.R2_SECRET_ACCESS_KEY ?? "",
+      R2_BUCKET: env.R2_BUCKET ?? "",
+    };
 
     await this.startAndWaitForPorts();
     // The persisted cookies were stale/out-of-date; restoring them injected a dead
@@ -60,11 +72,7 @@ export class ClaudeBridgeContainer extends Container {
       this.cleared = true;
       try { await this.ctx.storage.delete("authCookies"); console.log("[auth-cache] cleared stale persisted cookies"); } catch {}
     }
-    const url = new URL(request.url);
-    if (url.pathname === "/bridge" && !url.searchParams.get("key") && env.BRIDGE_KEY) {
-      url.searchParams.set("key", env.BRIDGE_KEY);
-    }
-    return this.containerFetch(new Request(url.toString(), request), BRIDGE_PORT);
+    return this.containerFetch(request, BRIDGE_PORT);
   }
 }
 
@@ -105,7 +113,7 @@ function bridgeStub(env: Env) {
   // container — both removed). Bumping this name forces a fresh container/storage;
   // only do that to recover a wedged instance, not as routine iteration (use
   // `wrangler dev` locally for that).
-  const id = env.CLAUDE_BRIDGE.idFromName("primary-weur-clean1");
+  const id = env.CLAUDE_BRIDGE.idFromName("primary-weur-keyless1");
   return env.CLAUDE_BRIDGE.get(id, { locationHint: "weur" });
 }
 
@@ -117,7 +125,7 @@ async function getContainerCookies(env: Env): Promise<{ header: string; authed: 
   const now = Date.now();
   if (cookieCache && now - cookieCache.at < 15000) return cookieCache;
   try {
-    const resp = await bridgeStub(env).fetch(`https://bridge.internal/session?key=${env.BRIDGE_KEY ?? ""}`);
+    const resp = await bridgeStub(env).fetch("https://bridge.internal/session");
     if (resp.ok) {
       const j = (await resp.json()) as { cookieHeader?: string; authed?: boolean };
       cookieCache = { header: j.cookieHeader || "", authed: !!j.authed, at: now };
@@ -180,8 +188,8 @@ export default {
       return bridgeStub(env).fetch(new Request(u.toString(), request));
     }
     // Diagnostics: gated by the Access check above (single allowlisted identity).
-    // We forward the Worker→container BRIDGE_KEY so bridge.cjs accepts the call;
-    // the browser never needs to know it. Maps /__bridge/debug-* → /debug-*.
+    // Maps /__bridge/debug-* → /debug-* on the bridge (reachable only via this
+    // Access-gated Worker over the private DO binding).
     {
       const debugMap: Record<string, string> = {
         "/__bridge/debug-rpc": "/debug-rpc",
@@ -191,7 +199,6 @@ export default {
       const target = debugMap[url.pathname];
       if (target) {
         const u = new URL(request.url); u.pathname = target;
-        if (env.BRIDGE_KEY) u.searchParams.set("key", env.BRIDGE_KEY);
         return bridgeStub(env).fetch(new Request(u.toString(), request));
       }
     }
@@ -253,7 +260,7 @@ async function tunnelThroughContainer(request: Request, url: URL, env: Env): Pro
   // streaming would require the renderer to relay chunks (future work).
   let r: Response;
   try {
-    r = await bridgeStub(env).fetch(`https://bridge.internal/proxy?key=${env.BRIDGE_KEY ?? ""}`, {
+    r = await bridgeStub(env).fetch("https://bridge.internal/proxy", {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(spec),
     });
   } catch (e) {

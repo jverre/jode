@@ -53,12 +53,9 @@ WORKDIR /opt/codex-rehost
 
 COPY payload/linux-rehost/package.json ./package.json
 COPY payload/linux-rehost/ ./
-COPY scripts/entrypoint.sh /opt/cloudflare/entrypoint.sh
-COPY scripts/health-server.mjs /opt/cloudflare/health-server.mjs
 COPY scripts/install-electron-linux.sh /opt/cloudflare/install-electron-linux.sh
-COPY scripts/xstartup.sh /opt/cloudflare/xstartup.sh
 
-RUN chmod +x /opt/cloudflare/entrypoint.sh /opt/cloudflare/install-electron-linux.sh /opt/cloudflare/xstartup.sh \
+RUN chmod +x /opt/cloudflare/install-electron-linux.sh \
   && npm install --omit=optional \
   && /opt/cloudflare/install-electron-linux.sh /opt/codex-rehost \
   && find node_modules/electron/dist/locales -type f ! -name 'en-US.pak' -delete \
@@ -69,38 +66,67 @@ RUN chmod +x /opt/cloudflare/entrypoint.sh /opt/cloudflare/install-electron-linu
 RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
   && apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/*
 
-# Native modules: the extracted app.asar.unpacked carries macOS prebuilts for
-# node-pty + better-sqlite3. Rebuild both fresh against Electron 42.1.0's ABI for
-# linux-x64. The extracted packages may lack source (prebuilt-only), so reinstall
-# from the registry and copy the freshly built binary into the payload's
-# node_modules. Non-fatal: a build failure must not block diagnosing the app boot.
+# Native modules (better-sqlite3, node-pty): the extracted app.asar.unpacked only
+# carries macOS prebuilts (Mach-O), so rebuild both for the Linux Electron 42 ABI.
+# Recipe ported from ilysenko/codex-desktop-linux (the project that runs this app
+# on Linux): install FRESH sources at the versions the app bundles, PATCH
+# better-sqlite3 for V8 14's external-pointer API (released versions don't compile
+# against Electron 42 otherwise), then build with @electron/rebuild.
 ENV ELECTRON_TARGET=42.1.0
-RUN mkdir -p /tmp/natbuild && cd /tmp/natbuild && npm init -y >/dev/null 2>&1 \
-  && for pkg in "node-pty@1.1.0-beta34" "better-sqlite3@12.9.0"; do \
-       name="${pkg%@*}"; \
-       echo "[native] building ${pkg} for electron ${ELECTRON_TARGET}"; \
-       (HOME=/root npm_config_runtime=electron npm_config_target="${ELECTRON_TARGET}" npm_config_arch=x64 \
-          npm_config_disturl=https://electronjs.org/headers \
-          npm install --build-from-source "${pkg}"; \
-        if [ -d "node_modules/${name}" ] && find "node_modules/${name}" -name '*.node' | grep -q .; then \
-          rm -rf "/opt/codex-rehost/app/node_modules/${name}"; \
-          cp -r "node_modules/${name}" "/opt/codex-rehost/app/node_modules/${name}"; \
-          echo "[native] ${name} OK:"; find "/opt/codex-rehost/app/node_modules/${name}" -name '*.node'; \
-        else \
-          echo "[native] ${name} BUILD FAILED — leaving existing module in place (lazy-loaded; diagnose separately)"; \
-        fi) \
-       || echo "[native] ${name} step errored (non-fatal)"; \
-     done
+COPY scripts/patch-better-sqlite3.cjs /opt/cloudflare/patch-better-sqlite3.cjs
+RUN set -eux; cd /tmp && mkdir -p natbuild && cd natbuild && echo '{"private":true}' > package.json \
+  && BS3_VER="$(node -p "require('/opt/codex-rehost/app/node_modules/better-sqlite3/package.json').version")" \
+  && NPTY_VER="$(node -p "require('/opt/codex-rehost/app/node_modules/node-pty/package.json').version")" \
+  && echo "[native] target electron=${ELECTRON_TARGET} better-sqlite3=${BS3_VER} node-pty=${NPTY_VER}" \
+  && npm install "electron@${ELECTRON_TARGET}" "@electron/rebuild@4.0.4" "node-abi@^4.31.0" --save-dev --ignore-scripts 2>&1 | tail -3 \
+  && npm install "better-sqlite3@${BS3_VER}" "node-pty@${NPTY_VER}" --ignore-scripts 2>&1 | tail -3 \
+  && node /opt/cloudflare/patch-better-sqlite3.cjs /tmp/natbuild/node_modules/better-sqlite3 \
+  && node node_modules/@electron/rebuild/lib/cli.js -v "${ELECTRON_TARGET}" --force \
+       --dist-url https://electronjs.org/headers 2>&1 | tail -15 \
+  && for name in better-sqlite3 node-pty; do \
+       find "node_modules/${name}" -name '*.node' | grep -q . || { echo "[native] ${name} produced NO .node"; exit 1; }; \
+       rm -rf "/opt/codex-rehost/app/node_modules/${name}"; \
+       cp -r "node_modules/${name}" "/opt/codex-rehost/app/node_modules/${name}"; \
+       find "/opt/codex-rehost/app/node_modules/${name}/build" -type f ! -name '*.node' -delete 2>/dev/null || true; \
+       echo "[native] ${name} OK:"; find "/opt/codex-rehost/app/node_modules/${name}" -name '*.node'; \
+     done \
+  && rm -rf /tmp/natbuild
+
+# FUSE + tigrisfs for the SHARED jode filesystem (one R2 bucket mounted live at
+# /workspace by every tool — see mount-workspace.sh). Its own late layer: does
+# NOT touch the big cached apt layer (whose ca-certificates postinst SIGILLs
+# under QEMU if re-run). Cloudflare Containers support FUSE natively.
+ARG TIGRISFS_VERSION=1.2.1
+RUN apt-get update \
+  && wget -qO /tmp/tigrisfs.deb "https://github.com/tigrisdata/tigrisfs/releases/download/v${TIGRISFS_VERSION}/tigrisfs_${TIGRISFS_VERSION}_linux_amd64.deb" \
+  && apt-get install -y --no-install-recommends fuse3 /tmp/tigrisfs.deb \
+  && rm -f /tmp/tigrisfs.deb \
+  && apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
+  && tigrisfs --version
+
+# Runtime scripts in a LATE layer — iterating on the supervisor/bridge must not
+# invalidate the npm/electron/native-rebuild layers above.
+COPY scripts/entrypoint.sh /opt/cloudflare/entrypoint.sh
+COPY scripts/xstartup.sh /opt/cloudflare/xstartup.sh
+COPY scripts/health-server.mjs /opt/cloudflare/health-server.mjs
+COPY scripts/login-callback-proxy.mjs /opt/cloudflare/login-callback-proxy.mjs
+COPY scripts/mount-workspace.sh /opt/cloudflare/mount-workspace.sh
+RUN chmod +x /opt/cloudflare/entrypoint.sh /opt/cloudflare/xstartup.sh /opt/cloudflare/mount-workspace.sh
 
 # Bridge server last — iterating on it must not invalidate the npm/electron layer.
-# NOTE: bridge/bridge.cjs is currently the Claude relay; for Codex the default
-# boot mode launches the app DIRECTLY (CODEX_BOOT_MODE=direct) to prove the
-# headless boot first. The bridge relay for Codex's webview/app-server IPC is a
-# follow-up (see plan 04 / apps/codex/README.md).
+# Codex bundles `ws` into its vite build, so it's not a standalone module in the
+# payload — install it alongside the bridge (bridge.cjs requires it from here).
 COPY bridge/ /opt/bridge/
+RUN cd /opt/bridge && npm init -y >/dev/null 2>&1 && npm install ws@8 >/dev/null 2>&1 \
+  && node -e "require('/opt/bridge/node_modules/ws'); console.log('[bridge] ws installed')"
 
 ENV CODEX_REHOST_FORCE_PLATFORM=linux
 ENV CODEX_LINUX_REHOST=1
+# The app resolves its agent backend (the codex rust app-server) via CODEX_CLI_PATH.
+# Point it at the native binary inside the globally-installed @openai/codex package
+# (the `codex` on PATH is only a JS wrapper). Without this the app shows
+# "Codex failed to start. Unable to locate the Codex CLI binary."
+ENV CODEX_CLI_PATH=/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex
 ENV ELECTRON_DISABLE_SECURITY_WARNINGS=true
 ENV KASMVNC_PORT=6901
 ENV KASMVNC_DISPLAY=:1
@@ -113,11 +139,13 @@ ENV REHOST_LOG=/tmp/codex-rehost/electron.log
 ENV REHOST_PID=/tmp/codex-rehost/electron.pid
 # Boot mode: "direct" launches `electron .` (bootstrap.cjs → Codex main) to verify
 # the headless boot. "bridge" launches the WS relay (Codex bridge — WIP).
-ENV CODEX_BOOT_MODE=direct
+ENV CODEX_BOOT_MODE=bridge
 ENV BRIDGE_PORT=8787
 ENV BRIDGE_APP_HOST=chatgpt.com
 ENV BRIDGE_SENDER_URL=https://chatgpt.com/
 
-EXPOSE 6901 8080 8787
+# 1456 = OAuth login-callback forwarder (publish as -p 1455:1456 so the ChatGPT
+# sign-in redirect to http://localhost:1455/auth/callback reaches the app-server).
+EXPOSE 6901 8080 8787 1456
 
 CMD ["/opt/cloudflare/entrypoint.sh"]

@@ -88,7 +88,26 @@ RUN mkdir -p /tmp/ptybuild && cd /tmp/ptybuild && npm init -y >/dev/null 2>&1 \
           || echo "NO BINARY")) \
   || echo "[node-pty] INSTALL/BUILD FAILED (terminal unavailable; rest of split unaffected)"
 
+# FUSE + tigrisfs for the SHARED jode filesystem (one R2 bucket mounted live at
+# /workspace by every tool — see mount-workspace.sh). Late layer: does NOT touch
+# the big cached apt layer (QEMU-fragile — see the ca-certificates note above).
+ARG TIGRISFS_VERSION=1.2.1
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends fuse3 curl \
+  && curl -fsSL -o /tmp/tigrisfs.deb "https://github.com/tigrisdata/tigrisfs/releases/download/v${TIGRISFS_VERSION}/tigrisfs_${TIGRISFS_VERSION}_linux_amd64.deb" \
+  && apt-get install -y --no-install-recommends /tmp/tigrisfs.deb \
+  && rm -f /tmp/tigrisfs.deb \
+  && apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
+  && tigrisfs --version
+COPY scripts/mount-workspace.sh /opt/cloudflare/mount-workspace.sh
+RUN chmod +x /opt/cloudflare/mount-workspace.sh
+
 # Bridge server last — iterating on it must not invalidate the npm/electron layer.
+# Bump JODE_BRIDGE_REV whenever bridge/ changes must force a new image: wrangler's
+# build cache keys off the Dockerfile, so a COPY'd-file edit alone can be reused
+# as an unchanged image and never roll the running container. This ENV makes the
+# change visible to that cache. (keyless = removed the BRIDGE_KEY gate.)
+ENV JODE_BRIDGE_REV=keyless-1
 COPY bridge/ /opt/bridge/
 
 ENV CLAUDE_REHOST_FORCE_PLATFORM=linux
@@ -102,10 +121,9 @@ ENV HEALTH_PORT=8080
 ENV REHOST_ROOT=/opt/claude-rehost
 ENV REHOST_LOG=/tmp/claude-rehost/electron.log
 ENV REHOST_PID=/tmp/claude-rehost/electron.pid
-# Bridge server (UI/server split). BRIDGE_KEY is intentionally NOT set here:
-# the Worker injects it at container start via envVars, sourced from the
-# `BRIDGE_KEY` Worker secret. bridge.cjs falls back to a dev-only default when
-# unset (local `wrangler dev`). Never bake the real secret into the image.
+# Bridge server (UI/server split). No bridge key: the bridge is reachable only
+# via the Worker's private DO binding, and the Worker verifies Cloudflare Access
+# on every request before relaying — so a separate key was redundant (removed).
 ENV BRIDGE_PORT=8787
 ENV BRIDGE_APP_HOST=claude.ai
 ENV BRIDGE_SENDER_URL=https://claude.ai/

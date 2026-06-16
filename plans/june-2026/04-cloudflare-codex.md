@@ -87,6 +87,71 @@ parameter-swap of Claude's).
   discrete channels. This is real engineering, not a config swap — it is the
   central work of the "Adapt Worker + bridge" step.
 
+## Findings from booting it (2026-06-07 — the rehost runs; UI window renders)
+
+The container build + headless boot got the **Codex UI window to render under Linux
+Electron**. Two hard problems were solved along the way, and both have clean recipes:
+
+- **`better-sqlite3` is a startup gate, not lazy.** The app blocks on a "Codex
+  cannot access its local database" dialog until SQLite loads. Released
+  `better-sqlite3` (incl. 12.10.0) does **not** compile against Electron 42's V8
+  (V8 14 enabled the external-pointer sandbox: `External::New/Value` need an
+  `ExternalPointerTypeTag`, and `SetNativeDataProperty`'s `0` setter arg is now
+  ambiguous). Fix: a 3-line C++ source patch (ported to
+  `apps/codex/scripts/patch-better-sqlite3.cjs` from `ilysenko/codex-desktop-linux`)
+  + build with `@electron/rebuild@4.0.4`. Verified compiling. The Dockerfile now
+  installs fresh sources, patches, and rebuilds both `better-sqlite3` + `node-pty`.
+- **Headless GL:** `--disable-gpu` makes Codex's webview busy-loop; use
+  `--use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader` (software GL).
+- **Serving model is simpler than feared.** Codex's own launcher serves the
+  `webview/` bundle from a **plain local HTTP server** and points Electron at it via
+  **`ELECTRON_RENDERER_URL`** — the renderer is NOT hardcoded to the `app://`
+  protocol; it honours a configurable origin and uses relative asset paths. So jode
+  can serve `webview/` from the Worker over HTTPS like any SPA; only the IPC
+  (`electronBridge` + the `connect-app-host` MessagePort) needs the `/bridge` relay.
+
+`ilysenko/codex-desktop-linux` is the load-bearing reference: native-module patch
+recipe, Electron-42 Linux libs/patchelf, the webview HTTP-server launcher, and a
+Rust reimplementation of Computer Use. Mine it before solving any Linux-boot
+problem from scratch.
+
+## Findings from wiring ChatGPT sign-in (2026-06-10 — works end-to-end in local dev)
+
+"Sign in with ChatGPT" was a no-op: the click works, but everything it triggers
+happened invisibly in the container. The full flow, now mapped and fixed:
+
+1. The login route calls the **app-server** (over the relayed `connect-app-host`
+   MessagePort) → the app-server starts a **one-shot OAuth callback server on the
+   container's `127.0.0.1:1455`** and returns an `authUrl`
+   (`auth.openai.com/oauth/authorize?...&redirect_uri=http://localhost:1455/auth/callback`
+   — the redirect_uri is fixed by OpenAI's client registration, NOT rewritable).
+2. The renderer dispatches `open-in-browser {url}` via
+   `codex_desktop:message-from-view` → relayed to the container's main →
+   `shell.openExternal`/browser-panel **on the invisible headless display**.
+3. Even shown to the user, completing the OAuth redirects to `localhost:1455` —
+   the **user's** machine, where nothing listens.
+
+Fixes (verified by a headless-Chrome click-through + a real `codex login` server):
+
+- **`bridge-client.js` intercepts `open-in-browser`**: http(s) URLs open in the
+  user's browser (`window.open`, falling back to a clickable overlay when
+  popup-blocked — the dispatch happens after awaits so the gesture token is gone).
+  `codex://` deep links still relay to main.
+- **`scripts/login-callback-proxy.mjs`** (in-container, spawned by entrypoint):
+  forwards `0.0.0.0:1456 → 127.0.0.1:1455`, because loopback-bound servers are
+  unreachable via `docker -p`. Run the container with **`-p 1455:1456`** and the
+  browser's redirect to `localhost:1455/auth/callback` lands on the app-server's
+  login server → login completes → `~/.codex/auth.json` written in the container.
+- Device-code login exists in the UI but is gated by a remote statsig-style flag
+  (`900122030`) — not a dependable lever.
+
+**Prod gap (Cloudflare-hosted):** `localhost:1455` resolves to the *user's*
+machine, so the published-port trick doesn't transfer. Options, in order:
+(a) the jode desktop main process listens on `127.0.0.1:1455` while a codex
+sign-in is pending and forwards to the Worker (new `/auth/callback` route →
+container `:1456`); (b) persist `~/.codex/auth.json` to R2 once and reuse;
+(c) `OPENAI_API_KEY` env (already plumbed via `envVars`).
+
 ## What is net-new (the real work)
 
 1. **The Codex payload build.** Get the Linux shims right so the extracted
@@ -102,10 +167,43 @@ parameter-swap of Claude's).
    the bridge's app host at OpenAI's backend; forward the right session/auth
    headers; decide the login model (see below). This is the analog of Claude
    Code's "auth model A" cookie-tunneling and is the second-hardest part.
-4. **Persistent `/workspace`.** Codex uses git worktrees/repos — the workspace must
-   survive restarts. Lift the R2 snapshot machinery from `apps/opencode`
-   (`entrypoint.sh` hydrate/checkpoint via rclone+zstd, `WORKSPACE` R2 bucket,
-   `R2_*` secrets). Eventually superseded by `@jode/sync`.
+4. **Persistent `/workspace`.** ~~Lift the R2 snapshot machinery from
+   `apps/opencode`~~ **DONE differently (2026-06-10): the SHARED jode
+   filesystem.** One R2 bucket (`jode-workspace`) is FUSE-mounted live at
+   `/workspace` by **all three tools** (claude-code, opencode, codex) via
+   tigrisfs — one "remote computer" with the same files in every agent, no
+   snapshots/sync loops. See `scripts/mount-workspace.sh` (identical copies in
+   all three apps) and the findings section below.
+
+## Findings from the shared filesystem (2026-06-10 — verified locally vs MinIO)
+
+The persistence model is **one live FUSE mount, not snapshots**: every jode tool
+mounts the same R2 bucket (`jode-workspace`) at `/workspace` with
+[tigrisfs](https://github.com/tigrisdata/tigrisfs) (geesefs lineage).
+Cloudflare Containers support FUSE natively
+([docs](https://developers.cloudflare.com/containers/examples/r2-fuse-mount/),
+[changelog 2025-11-21](https://developers.cloudflare.com/changelog/post/2025-11-21-fuse-support-in-containers/)).
+Verified end-to-end with two containers on one MinIO bucket: writes from one
+visible in the other within seconds, both directions.
+
+- **`--stat-cache-ttl 5s`** (default 1m) so one tool's writes appear in the
+  others within seconds.
+- **Write-back caching**: a clean unmount flushes everything (all entrypoints
+  unmount on SIGTERM); a hard kill can drop the last few seconds of writes.
+- **`wrangler dev` CANNOT mount**: it launches local containers without
+  `/dev/fuse`/`SYS_ADMIN` and has no docker-flag passthrough — the mount script
+  detects this and degrades to a local ephemeral `/workspace`. Local dev with
+  the real shared FS = the standalone-docker dev-proxy flow with
+  `--device /dev/fuse --cap-add SYS_ADMIN` (against real R2 or MinIO with
+  `R2_PROVIDER=Minio`).
+- **Not POSIX**: fine for repos/files; do NOT put sqlite/lock-heavy state on it
+  (app state like `~/.codex` stays on container-local disk and is therefore
+  ephemeral — descoped deliberately).
+- **Cloud setup (per app)**: `R2_BUCKET=jode-workspace` in `[vars]` (done) +
+  secrets `R2_ENDPOINT` (`https://<ACCOUNT_ID>.r2.cloudflarestorage.com`),
+  `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` from an R2 API token (dashboard →
+  R2 → Manage API tokens → Object Read & Write on `jode-workspace`). The bucket
+  exists (created via wrangler).
 
 ## Auth model — decide early
 

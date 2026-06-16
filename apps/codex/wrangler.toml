@@ -2,23 +2,30 @@ name = "jode-codex"
 main = "src/index.ts"
 compatibility_date = "2026-05-31"
 compatibility_flags = ["nodejs_compat"]
-workers_dev = true
-preview_urls = true
+# Custom domain only: workers.dev + preview URLs are OFF so this agent is
+# reachable solely via its jode.jacquesverre.com subdomain. One Cloudflare Access
+# app over *.jode.jacquesverre.com gates all three agents with a single login.
+workers_dev = false
+preview_urls = false
+routes = [
+  { pattern = "codex.jode.jacquesverre.com", custom_domain = true },
+]
 
 # Cloudflare Access gate config (non-secret). The Worker verifies the Access JWT
 # against these on every request — see @jode/auth + apps/codex/README.md.
 # Set these to your team domain, the Access application's AUD tag, and the single
 # allowed email. BRIDGE_KEY is NOT here — it's a secret: `wrangler secret put BRIDGE_KEY`.
 [vars]
-ACCESS_TEAM_DOMAIN = "https://YOUR-TEAM.cloudflareaccess.com"
-ACCESS_AUD = "REPLACE_WITH_ACCESS_APPLICATION_AUD_TAG"
-ALLOWED_EMAIL = "jacques@comet.com"
+ACCESS_TEAM_DOMAIN = "https://lucky-truth-10f2.cloudflareaccess.com"
+ACCESS_AUD = "2a4a41c1761999b8feb94c25da28f51ee10c73a17eb0b42d17cbc08c7bb05628"
+ALLOWED_EMAIL = "jverre@gmail.com"
 
-# Workspace persistence (non-secret) — same R2 snapshot model as @jode/opencode.
-# The container tars /workspace to R2 via the S3 API; the R2_* creds are secrets.
-R2_BUCKET = "jode-codex-workspace"
-WORKSPACE_KEY = "default/workspace.tar.zst"
-CHECKPOINT_INTERVAL = "300"
+# The SHARED jode filesystem (non-secret): ONE R2 bucket FUSE-mounted at
+# /workspace by every tool (claude-code, opencode, codex) — the user sees one
+# "remote computer" with the same live files in every agent. The S3 creds the
+# container mounts with are secrets: R2_ENDPOINT / R2_ACCESS_KEY_ID /
+# R2_SECRET_ACCESS_KEY (wrangler secret put).
+R2_BUCKET = "jode-workspace"
 
 [observability]
 enabled = true
@@ -44,7 +51,7 @@ run_worker_first = true
 # snapshots); the in-container sync uses the S3 API with the R2_* secrets.
 [[r2_buckets]]
 binding = "WORKSPACE"
-bucket_name = "jode-codex-workspace"
+bucket_name = "jode-workspace"
 
 [[containers]]
 class_name = "CodexBridgeContainer"

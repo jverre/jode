@@ -30,14 +30,14 @@ type Env = {
   /** Local-dev only: set to "true" in .dev.vars to skip Access verification.
    *  NEVER set in wrangler.toml [vars] — production must always verify. */
   ACCESS_DEV_BYPASS?: string;
-  // ── Persistence + model config, injected into the container via envVars ──
-  /** R2 S3 endpoint, e.g. https://<ACCOUNT_ID>.r2.cloudflarestorage.com (secret). */
+  // ── Shared filesystem + model config, injected into the container via envVars ──
+  /** S3 creds for the SHARED jode filesystem (one R2 bucket FUSE-mounted at
+   *  /workspace by every tool). Endpoint e.g.
+   *  https://<ACCOUNT_ID>.r2.cloudflarestorage.com (secret). */
   R2_ENDPOINT?: string;
   R2_ACCESS_KEY_ID?: string;
   R2_SECRET_ACCESS_KEY?: string;
   R2_BUCKET: string;
-  WORKSPACE_KEY: string;
-  CHECKPOINT_INTERVAL: string;
   /** Model provider key(s) the agent uses (secret). */
   ANTHROPIC_API_KEY?: string;
   OPENAI_API_KEY?: string;
@@ -46,9 +46,9 @@ type Env = {
 export class OpencodeContainer extends Container {
   defaultPort = OPENCODE_PORT;
   requiredPorts = [OPENCODE_PORT];
-  // Let the container sleep when idle to save money. The entrypoint checkpoints
-  // /workspace to R2 periodically and on SIGTERM, so a sleep is recoverable
-  // (with the snapshot-vs-live-volume caveat noted in the README).
+  // Let the container sleep when idle to save money. /workspace is a live FUSE
+  // mount of the shared R2 bucket, so a sleep loses nothing — the files are in
+  // the bucket, not on the container disk.
   sleepAfter = "30m";
 
   override async fetch(request: Request): Promise<Response> {
@@ -62,8 +62,6 @@ export class OpencodeContainer extends Container {
       R2_ACCESS_KEY_ID: env.R2_ACCESS_KEY_ID ?? "",
       R2_SECRET_ACCESS_KEY: env.R2_SECRET_ACCESS_KEY ?? "",
       R2_BUCKET: env.R2_BUCKET ?? "",
-      WORKSPACE_KEY: env.WORKSPACE_KEY ?? "default/workspace.tar.zst",
-      CHECKPOINT_INTERVAL: env.CHECKPOINT_INTERVAL ?? "300",
       ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY ?? "",
       OPENAI_API_KEY: env.OPENAI_API_KEY ?? "",
     };

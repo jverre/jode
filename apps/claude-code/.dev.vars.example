@@ -1,10 +1,6 @@
 # Local dev secrets for `wrangler dev`. Copy to `.dev.vars` (gitignored) and fill in.
 # In production these are set via `wrangler secret put` / the [vars] block in wrangler.toml.
 
-# Worker→container shared secret (defense-in-depth on the private DO binding).
-# Generate one, e.g.: openssl rand -hex 32
-BRIDGE_KEY="dev-bridge-key"
-
 # Local dev: skip Cloudflare Access verification so the desktop webview can load
 # the agent under `wrangler dev` (you can't mint a real Access JWT locally). This
 # is read ONLY here — never put it in wrangler.toml [vars] / production.

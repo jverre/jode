@@ -14,3 +14,17 @@ ACCESS_DEV_BYPASS="true"
 ACCESS_TEAM_DOMAIN="https://YOUR-TEAM.cloudflareaccess.com"
 ACCESS_AUD="REPLACE_WITH_ACCESS_APPLICATION_AUD_TAG"
 ALLOWED_EMAIL="jacques@comet.com"
+
+# The SHARED jode filesystem (one R2 bucket FUSE-mounted at /workspace by every
+# tool; see wrangler.toml + scripts/mount-workspace.sh). In production these are
+# secrets:
+#   wrangler secret put R2_ENDPOINT          # https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+#   wrangler secret put R2_ACCESS_KEY_ID     # R2 API token (Object Read & Write)
+#   wrangler secret put R2_SECRET_ACCESS_KEY
+# NOTE: under `wrangler dev` the mount CANNOT work (no /dev/fuse / SYS_ADMIN in
+# local containers) — /workspace falls back to local-ephemeral. For the real
+# shared FS locally, use the standalone docker flow in scripts/dev-proxy.mjs
+# (works against real R2, or MinIO with R2_PROVIDER=Minio).
+#R2_ENDPOINT=""
+#R2_ACCESS_KEY_ID=""
+#R2_SECRET_ACCESS_KEY=""

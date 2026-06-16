@@ -17,7 +17,10 @@
 //                  {   t:"ready",     channels:[...], token-ok}
 //                  {   t:"pong"}
 //
-// Security: WS requires ?key=<BRIDGE_KEY> (env). Never expose unauthenticated.
+// Security: this server is reachable ONLY through the Worker's private DO
+// binding, and the Worker verifies Cloudflare Access on every request before
+// relaying — so there is no separate bridge key (it was redundant defense-in-
+// depth, not user auth, and just a failure mode; removed).
 // Observability: every boundary logs with a [bridge:*] tag.
 // ─────────────────────────────────────────────────────────────────────────────
 const path = require("node:path");
@@ -30,7 +33,6 @@ const REHOST = process.env.REHOST_ROOT
 const WS = require(path.join(REHOST, "app", "node_modules", "ws"));
 
 const PORT = Number(process.env.BRIDGE_PORT || 8787);
-const BRIDGE_KEY = process.env.BRIDGE_KEY || "dev-bridge-key";
 const CALL_TIMEOUT_MS = Number(process.env.BRIDGE_CALL_TIMEOUT_MS || 15000);
 const APP_HOST = process.env.BRIDGE_APP_HOST || "claude.ai"; // origin used to id the main view
 const SENDER_URL = process.env.BRIDGE_SENDER_URL || "https://claude.ai/";
@@ -96,7 +98,7 @@ function logicalOf(c) {
 
 // ── RPC debug ring buffer ("debug once and for all") ────────────────────────
 // Records the last N RPCs with DECODED args + result/error, exposed at
-// GET /debug-rpc?key= so failures (esp. arg-validation) are inspectable on
+// GET /debug-rpc so failures (esp. arg-validation) are inspectable on
 // demand. Also logged to stdout (visible via `wrangler tail`).
 const recentRpc = [];
 function preview(v) {
@@ -364,8 +366,7 @@ const server = http.createServer(async (req, res) => {
   if (reqUrl && reqUrl.pathname === "/session") {
     // Server-side session sharing (auth model A): return the container's
     // claude.ai cookies so the Worker can attach them to proxied /api/* calls.
-    // Protected — exposes auth cookies. Worker must pass ?key=BRIDGE_KEY.
-    if (reqUrl.searchParams.get("key") !== BRIDGE_KEY) { res.writeHead(401); res.end("unauthorized"); return; }
+    // Reachable only via the Access-gated Worker over the private DO binding.
     try {
       const st = mainState();
       const ses = st && st.wc && st.wc.session ? st.wc.session : electron.session.defaultSession;
@@ -391,7 +392,6 @@ const server = http.createServer(async (req, res) => {
     // view's renderer (claude.ai origin, Turnstile-cleared, authenticated
     // session). Set-Cookie lands in the container session automatically. The
     // Worker tunnels all /api/* here. Non-streaming JSON only (login/bootstrap).
-    if (reqUrl.searchParams.get("key") !== BRIDGE_KEY) { res.writeHead(401); res.end("unauthorized"); return; }
     const st = mainState();
     if (!st || !st.wc || st.wc.isDestroyed()) { res.writeHead(503); res.end(JSON.stringify({ error: "main view not ready" })); return; }
     let bodyChunks = [];
@@ -444,7 +444,6 @@ const server = http.createServer(async (req, res) => {
     // timed-out response with "Failed to fetch". Here we do a NODE-side fetch with
     // the renderer session's cookies + UA (same container IP → cf_clearance stays
     // valid) and stream the body straight back, chunk by chunk.
-    if (reqUrl.searchParams.get("key") !== BRIDGE_KEY) { res.writeHead(401); res.end("unauthorized"); return; }
     const st = mainState();
     if (!st || !st.wc || st.wc.isDestroyed()) { res.writeHead(503); res.end(JSON.stringify({ error: "main view not ready" })); return; }
     let bodyChunks = [];
@@ -511,19 +510,17 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   if (reqUrl && reqUrl.pathname === "/debug-rpc") {
-    if (reqUrl.searchParams.get("key") !== BRIDGE_KEY) { res.writeHead(401); res.end("unauthorized"); return; }
     const onlyErr = reqUrl.searchParams.get("errors") === "1";
     const rows = onlyErr ? recentRpc.filter((r) => !r.ok) : recentRpc;
     res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
     res.end(JSON.stringify({ count: rows.length, rpc: rows.slice(-60) }, null, 2));
     return;
   }
-  // GET /debug-pty?key= — node-pty self-test (#5 verification). Spawns a real
+  // GET /debug-pty — node-pty self-test (#5 verification). Spawns a real
   // shell in the CONTAINER under the Electron-41 ABI, runs a fixed command, and
   // returns the echoed output. Key-gated + fixed command (NOT a browser shell),
   // so it never exposes an unauthenticated/arbitrary PTY.
   if (reqUrl && reqUrl.pathname === "/debug-pty") {
-    if (reqUrl.searchParams.get("key") !== BRIDGE_KEY) { res.writeHead(401); res.end("unauthorized"); return; }
     const out = { step: "start", abi: process.versions.modules, electron: process.versions.electron };
     try {
       const pty = require(path.join(REHOST, "app", "node_modules", "node-pty"));
@@ -543,7 +540,7 @@ const server = http.createServer(async (req, res) => {
     res.end(JSON.stringify(out, null, 2));
     return;
   }
-  // GET /debug-session?key= — drive the REAL session+PTY handlers (#4/#5) WITHOUT
+  // GET /debug-session — drive the REAL session+PTY handlers (#4/#5) WITHOUT
   // an interactive login, by injecting the account/org state the app gates on:
   //   setAccountDetails → populates Ss() store (so _I()/hx() resolve accountId)
   //   set lastActiveOrg cookie → so Sr() resolves orgId
@@ -552,7 +549,6 @@ const server = http.createServer(async (req, res) => {
   // work — this verifies the handler/PTY routing end-to-end. Key-gated, fixed flow
   // (NOT an arbitrary browser shell).
   if (reqUrl && reqUrl.pathname === "/debug-session") {
-    if (reqUrl.searchParams.get("key") !== BRIDGE_KEY) { res.writeHead(401); res.end("unauthorized"); return; }
     const TOK = "df09fea9-cb64-4a74-80a9-7bacc8add1d2";
     const C = (svc, m) => `$eipc_message$_${TOK}_$_claude.web_$_${svc}_$_${m}`;
     const ORG = "00000000-0000-4000-8000-0000000000aa";
@@ -587,11 +583,10 @@ const server = http.createServer(async (req, res) => {
     res.end(JSON.stringify(trace, null, 2));
     return;
   }
-  // GET /auth-cookies?key= — full claude.ai/anthropic cookie objects for the DO to
+  // GET /auth-cookies — full claude.ai/anthropic cookie objects for the DO to
   // persist (so a real login survives container recycles → no re-login). Returns
   // restorable objects (url/name/value/domain/path/secure/httpOnly/expirationDate).
   if (reqUrl && reqUrl.pathname === "/auth-cookies") {
-    if (reqUrl.searchParams.get("key") !== BRIDGE_KEY) { res.writeHead(401); res.end("unauthorized"); return; }
     try {
       const st = mainState();
       const ses = st && st.wc && st.wc.session ? st.wc.session : electron.session.defaultSession;
@@ -609,10 +604,9 @@ const server = http.createServer(async (req, res) => {
     } catch (e) { res.writeHead(500); res.end(JSON.stringify({ error: String(e && e.message) })); }
     return;
   }
-  // POST /restore-cookies?key= {cookies:[...]} — inject persisted cookies into the
+  // POST /restore-cookies {cookies:[...]} — inject persisted cookies into the
   // renderer session on a fresh container so the claude.ai login is already present.
   if (reqUrl && reqUrl.pathname === "/restore-cookies") {
-    if (reqUrl.searchParams.get("key") !== BRIDGE_KEY) { res.writeHead(401); res.end("unauthorized"); return; }
     let chunks = [];
     req.on("data", (c) => chunks.push(c));
     req.on("end", async () => {
@@ -643,12 +637,6 @@ const server = http.createServer(async (req, res) => {
 
 const wss = new WS.Server({ server, path: "/bridge" });
 wss.on("connection", (ws, req) => {
-  const url = new URL(req.url, "http://localhost");
-  if (url.searchParams.get("key") !== BRIDGE_KEY) {
-    log("WS rejected (bad key) from", req.socket.remoteAddress);
-    ws.close(4001, "unauthorized");
-    return;
-  }
   ws.__sub = true;
   clients.add(ws);
   log(`WS client connected (${clients.size} total)`);

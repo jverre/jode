@@ -35,8 +35,26 @@ const CLAUDE_DESKTOP_UA =
 
 type AgentStatus = 'idle' | 'loading' | 'ready' | 'login' | 'error'
 
-/** Partition name for an agent's persistent, isolated session (cookies/login). */
-const partitionFor = (id: string): string => `persist:agent-${id}`
+/**
+ * ONE shared persistent session partition for every agent pane.
+ *
+ * All three agents sit behind a SINGLE Cloudflare Access application (same
+ * ACCESS_AUD / team domain over *.jode.jacquesverre.com — see each app's
+ * wrangler.toml), so a single Access identity already authorizes all of them.
+ * The only thing that was forcing a separate login per pane was giving each
+ * WebContentsView its own cookie jar: the `*.cloudflareaccess.com` team-session
+ * cookie — what lets Access silently mint a per-host token without re-prompting —
+ * was siloed per pane.
+ *
+ * Sharing one jar fixes that: the first pane's login stores the team-session
+ * cookie here; switching to another agent (a different jode subdomain) lets
+ * Access reuse it and redirect straight back, no second prompt. Per-app web
+ * sessions stay isolated regardless — cookies/localStorage are scoped by origin
+ * within the partition, so claude.ai's, Codex's and OpenCode's sessions never
+ * bleed into each other; only the common Access cookie is shared, which is the
+ * intent (a single allowed identity gating all three).
+ */
+const SHARED_PARTITION = 'persist:jode'
 
 /**
  * True when the web view is sitting on a Cloudflare Access login surface — the
@@ -56,9 +74,9 @@ function isAccessLoginUrl(rawUrl: string): boolean {
  * Owns one WebContentsView per agent. Views are created lazily on first switch,
  * kept alive in the background, shown/hidden on switch, and floated as a rounded
  * "card" inset from the window edges — flush against the sidebar on the left so
- * the active sidebar tab merges into it. Each view gets its own persistent
- * session partition so an agent's cookies/login survive restarts and stay
- * isolated.
+ * the active sidebar tab merges into it. All views share ONE persistent session
+ * partition (SHARED_PARTITION) so a single Cloudflare Access login covers every
+ * agent; per-app web sessions stay isolated by origin within that jar.
  */
 export class ViewManager {
   private views = new Map<string, WebContentsView>()
@@ -87,7 +105,7 @@ export class ViewManager {
   private create(agent: AgentDef): WebContentsView {
     const view = new WebContentsView({
       webPreferences: {
-        partition: partitionFor(agent.id),
+        partition: SHARED_PARTITION,
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true
@@ -144,14 +162,14 @@ export class ViewManager {
   }
 
   /**
-   * Sign out of a hosted agent: clear its partition's cookies so the next load
-   * hits Cloudflare Access fresh, then reload (which lands on the login page).
+   * Sign out. Because all panes share one Access identity (SHARED_PARTITION),
+   * this is a single global sign-out: clear the shared cookie jar so the next
+   * load hits Cloudflare Access fresh, then reload every live view so each rail
+   * tab reflects the signed-out state (the `id` arg is kept for the IPC shape).
    */
-  async signOut(id: string): Promise<void> {
-    const view = this.views.get(id)
-    if (!view) return
-    await session.fromPartition(partitionFor(id)).clearStorageData({ storages: ['cookies'] })
-    view.webContents.reload()
+  async signOut(_id: string): Promise<void> {
+    await session.fromPartition(SHARED_PARTITION).clearStorageData({ storages: ['cookies'] })
+    for (const view of this.views.values()) view.webContents.reload()
   }
 
   private classify(id: string, url: string): void {
@@ -173,7 +191,7 @@ export class ViewManager {
       parent: this.win,
       title: `Sign in — ${agent.name}`,
       webPreferences: {
-        partition: partitionFor(agent.id),
+        partition: SHARED_PARTITION,
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true
