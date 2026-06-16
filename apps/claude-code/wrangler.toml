@@ -2,17 +2,30 @@ name = "jode-claude-code"
 main = "src/index.ts"
 compatibility_date = "2026-05-31"
 compatibility_flags = ["nodejs_compat"]
-workers_dev = true
-preview_urls = true
+# Custom domain only: workers.dev + preview URLs are OFF so this agent is
+# reachable solely via its jode.jacquesverre.com subdomain. One Cloudflare Access
+# app over *.jode.jacquesverre.com gates all three agents with a single login.
+workers_dev = false
+preview_urls = false
+routes = [
+  { pattern = "claude.jode.jacquesverre.com", custom_domain = true },
+]
 
 # Cloudflare Access gate config (non-secret). The Worker verifies the Access JWT
 # against these on every request — see @jode/auth + apps/claude-code/README.md.
 # Set these to your team domain, the Access application's AUD tag, and the single
-# allowed email. BRIDGE_KEY is NOT here — it's a secret: `wrangler secret put BRIDGE_KEY`.
+# allowed email. (There is no bridge key — the bridge is reachable only via this
+# Worker's private DO binding, which is already Access-gated on every request.)
 [vars]
-ACCESS_TEAM_DOMAIN = "https://YOUR-TEAM.cloudflareaccess.com"
-ACCESS_AUD = "REPLACE_WITH_ACCESS_APPLICATION_AUD_TAG"
-ALLOWED_EMAIL = "jacques@comet.com"
+ACCESS_TEAM_DOMAIN = "https://lucky-truth-10f2.cloudflareaccess.com"
+ACCESS_AUD = "2a4a41c1761999b8feb94c25da28f51ee10c73a17eb0b42d17cbc08c7bb05628"
+ALLOWED_EMAIL = "jverre@gmail.com"
+
+# The SHARED jode filesystem (non-secret): ONE R2 bucket FUSE-mounted at
+# /workspace by every tool (claude-code, opencode, codex) — one "remote computer"
+# with the same live files in every agent. The S3 creds the container mounts with
+# are secrets: R2_ENDPOINT / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY.
+R2_BUCKET = "jode-workspace"
 
 [observability]
 enabled = true

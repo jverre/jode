@@ -46,6 +46,13 @@ log "electron package version=${ELECTRON_PKG_VERSION}"
 log "app package version=${APP_PKG_VERSION}"
 phase "entrypoint:environment" "versions recorded"
 
+# Mount the SHARED jode filesystem (one R2 bucket, FUSE) at /workspace — all
+# tools (claude-code, opencode, codex) see the same live files. No-op (local
+# ephemeral dir) when R2 creds are absent.
+phase "entrypoint:workspace:mount" "mounting shared R2 filesystem"
+MOUNT_LOG_DIR=/tmp/claude-rehost /opt/cloudflare/mount-workspace.sh || true
+phase "entrypoint:workspace:done" "mount-workspace finished"
+
 log "starting health server"
 phase "entrypoint:health-server:start" "launching health server"
 node /opt/cloudflare/health-server.mjs >/tmp/claude-rehost/health-server.log 2>&1 &

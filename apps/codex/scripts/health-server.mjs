@@ -116,7 +116,18 @@ function fileCheck(pathname) {
 }
 
 http
-  .createServer((_req, res) => {
+  .createServer((req, res) => {
+    const url = new URL(req.url || "/", "http://localhost");
+    // Shared-filesystem mount diagnostics (tigrisfs log + mount table).
+    if (url.pathname === "/mount-status") {
+      res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({
+        mounted: /\/workspace/.test(readText("/proc/mounts")),
+        mounts: readText("/proc/mounts").split("\n").filter((l) => l.includes("/workspace")),
+        log: tail(readText("/tmp/codex-rehost/tigrisfs.log"), 40),
+      }, null, 2) + "\n");
+      return;
+    }
     const pid = readPid();
     const log = readText(logFile);
     const exitCode = readExitCode();

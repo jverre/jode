@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'node:path'
 import { AGENTS, agentInfo } from './agents'
-import { ViewManager } from './viewManager'
+import { ViewManager, TITLEBAR_HEIGHT } from './viewManager'
 import { preferDetachedDevTools } from './devtools'
 
 let win: BrowserWindow | null = null
@@ -15,7 +15,18 @@ function createWindow(): void {
     minHeight: 560,
     backgroundColor: '#fafafa',
     show: false,
-    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' as const } : {}),
+    // macOS: hide the title bar but keep the native traffic lights, dragging the
+    // custom strip via `-webkit-app-region: drag` (see App.tsx). Use 'hidden',
+    // NOT 'hiddenInset': hiddenInset + a child WebContentsView is a confirmed
+    // Electron bug (electron#26114) where the drag region kills the child view's
+    // clicks. With 'hidden' the traffic lights sit at the very top-left, so nudge
+    // them down to stay centred in our TITLEBAR_HEIGHT strip.
+    ...(process.platform === 'darwin'
+      ? {
+          titleBarStyle: 'hidden' as const,
+          trafficLightPosition: { x: 12, y: Math.round((TITLEBAR_HEIGHT - 14) / 2) }
+        }
+      : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,

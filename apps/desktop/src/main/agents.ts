@@ -21,11 +21,24 @@ export interface AgentDef {
   url?: string
 }
 
-/** Resolve a per-agent Worker URL from `JODE_<ID>_URL` (id uppercased, `-`→`_`). */
+/**
+ * Production hosted URLs — each agent is its own Cloudflare Worker on a
+ * subdomain of jode.jacquesverre.com (one Cloudflare Access app over
+ * *.jode.jacquesverre.com gates all three with a single login). These are the
+ * defaults a packaged build uses; `JODE_<ID>_URL` env vars override them (the
+ * dev launcher in tools/dev.mjs points them at localhost).
+ */
+const PROD_URLS: Record<string, string> = {
+  'claude-code': 'https://claude.jode.jacquesverre.com',
+  codex: 'https://codex.jode.jacquesverre.com',
+  opencode: 'https://opencode.jode.jacquesverre.com'
+}
+
+/** Resolve a per-agent Worker URL: `JODE_<ID>_URL` env override, else the prod default. */
 function resolveUrl(id: string): string | undefined {
   const key = `JODE_${id.replace(/-/g, '_').toUpperCase()}_URL`
   const value = process.env[key]?.trim()
-  return value ? value : undefined
+  return value ? value : PROD_URLS[id]
 }
 
 export const AGENTS: AgentDef[] = [

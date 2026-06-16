@@ -1,12 +1,11 @@
-// gen-assets.mjs — generate src/generated-assets.ts: the injected index.html,
-// the bridge-client, and the real mainView.js preload, bundled as strings the
+// gen-assets.mjs — generate src/generated-assets.ts: the injected webview
+// index.html, the bridge-client, and the REAL preload.js, bundled as strings the
 // Worker serves (Workers have no runtime FS). Run before deploy/dry-run.
 //
-// Reads only files inside apps/claude-code:
-//   • browser-bridge/bridge-client.js          (committed split source)
-//   • payload/linux-rehost/app/.vite/build/mainView.js   (from build:payload)
-//   • payload/linux-rehost/app/resources/ion-dist/...    (fallback shell)
-//   • spa-assets.json                          (live claude.ai CDN bundle pointer)
+// Reads only files inside apps/codex:
+//   • browser-bridge/bridge-client.js                    (committed split source)
+//   • payload/linux-rehost/app/.vite/build/preload.js    (from build:payload)
+//   • payload/linux-rehost/app/webview/index.html        (the renderer shell)
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
@@ -14,73 +13,55 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PAYLOAD_APP = path.join(ROOT, "payload", "linux-rehost", "app");
-const ION = path.join(PAYLOAD_APP, "resources", "ion-dist");
+const WEBVIEW = path.join(PAYLOAD_APP, "webview");
 const BUILD = path.join(PAYLOAD_APP, ".vite", "build");
 const BB = path.join(ROOT, "browser-bridge");
-const SPA_ASSETS = path.join(ROOT, "spa-assets.json");
 
-const mainViewPath = path.join(BUILD, "mainView.js");
-if (!existsSync(mainViewPath)) {
+const preloadPath = path.join(BUILD, "preload.js");
+const indexPath = path.join(WEBVIEW, "index.html");
+if (!existsSync(preloadPath) || !existsSync(indexPath)) {
   throw new Error(
-    `Missing ${mainViewPath}. Run \`npm run build:payload\` first to extract the ` +
-      `Claude Desktop payload from /Applications/Claude.app.`,
+    `Missing ${existsSync(preloadPath) ? indexPath : preloadPath}. Run \`npm run build:payload\` ` +
+      `first to extract the Codex payload from /Applications/Codex.app.`,
   );
 }
 
 const bridgeClient = readFileSync(path.join(BB, "bridge-client.js"), "utf8");
-const mainView = readFileSync(mainViewPath, "utf8");
+const preload = readFileSync(preloadPath, "utf8");
 
-// Content-hash version → cache-bust the script URLs so a reload always fetches
-// the current bridge-client/preload (browsers can otherwise serve a stale copy
-// cached under the old no-cache header).
-const ver = createHash("sha256").update(bridgeClient).digest("hex").slice(0, 12);
+// Content-hash version → cache-bust the bridge-client/preload script URLs.
+const ver = createHash("sha256").update(bridgeClient + preload).digest("hex").slice(0, 12);
+
 const inject =
+  `<base href="/">` +
   `<script>window.__BRIDGE_WS_URL__=(location.protocol==="https:"?"wss://":"ws://")+location.host+"/bridge";` +
-  `window.__BRIDGE_PRELOAD_URL__="/__bridge/mainView.js?v=${ver}";</script>` +
+  `window.__BRIDGE_PRELOAD_URL__="/__bridge/preload.js?v=${ver}";` +
+  `window.__BRIDGE_BOOT_URL__="/__bridge/boot";</script>` +
   `<script src="/__bridge/bridge-client.js?v=${ver}"></script>`;
 
-// DEFAULT: load the CURRENT claude.ai bundle from the public CDN (spa-assets.json)
-// so the renderer stays in lockstep with claude.ai. Set SPLIT_BAKED_SPA=1 to
-// force the baked ion-dist shell (offline / pinned-build debugging).
-let indexHtml;
-let shellSource;
-const useBaked = process.env.SPLIT_BAKED_SPA === "1";
-let spa = null;
-if (!useBaked) {
-  try {
-    spa = JSON.parse(readFileSync(SPA_ASSETS, "utf8"));
-  } catch {
-    spa = null;
-  }
-}
-if (spa) {
-  const css = spa.css.map((c) => `<link rel="stylesheet" href="${spa.cdnBase}${c}">`).join("");
-  indexHtml =
-    `<!DOCTYPE html><html ${spa.htmlAttrs}><head><meta charset="UTF-8">` +
-    `<meta name="viewport" content="width=device-width,initial-scale=1">` +
-    css +
-    inject +
-    `<script type="module" src="${spa.cdnBase}${spa.script}"></script>` +
-    `</head><body class="${spa.bodyClass}"><div id="root"></div></body></html>`;
-  shellSource = `cdn:${spa.build}`;
-} else {
-  indexHtml = readFileSync(path.join(ION, "index.html"), "utf8")
-    .replace(/<script src="\/browser-preload-shim\.js"><\/script>/g, "")
-    .replace(/<script type="module" src="\/browser-module-preload\.js"><\/script>/g, "");
-  indexHtml = indexHtml.replace(/<\/head>/, inject + "</head>");
-  shellSource = "baked:ion-dist";
-}
+let indexHtml = readFileSync(indexPath, "utf8");
+// 1. Drop the bundle's strict CSP — it pins script-src to a build-time hash and
+//    blocks the injected bridge-client + the cross-origin OpenAI/ChatGPT backend
+//    connections. The Worker serves over its own origin; rely on Access for auth.
+indexHtml = indexHtml.replace(/<meta http-equiv="Content-Security-Policy"[\s\S]*?>/i, "<!-- CSP stripped by gen-assets (bridge + cross-origin backend) -->");
+// 2. Clear the placeholder comments the Electron main would normally fill.
+indexHtml = indexHtml.replace("<!-- PROD_BASE_TAG_HERE -->", "");
+indexHtml = indexHtml.replace("<!-- PROD_CSP_TAG_HERE -->", "");
+// 3. Inject the bridge-client (classic script) BEFORE the SPA module so the
+//    electron shim + real preload run first.
+if (!/<script type="module"/.test(indexHtml)) throw new Error("webview index.html has no module script to inject before");
+indexHtml = indexHtml.replace(/<script type="module"/, inject + "\n    <script type=\"module\"");
 
 const enc = (s) => JSON.stringify(s);
 const out =
   `// AUTO-GENERATED by scripts/gen-assets.mjs — do not edit.\n` +
   `export const INDEX_HTML = ${enc(indexHtml)};\n` +
   `export const BRIDGE_CLIENT_JS = ${enc(bridgeClient)};\n` +
-  `export const MAINVIEW_JS = ${enc(mainView)};\n`;
+  `export const PRELOAD_JS = ${enc(preload)};\n`;
 writeFileSync(path.join(ROOT, "src", "generated-assets.ts"), out);
 console.log(
   JSON.stringify(
-    { ok: true, shell: shellSource, indexBytes: indexHtml.length, bridgeClientBytes: bridgeClient.length, mainViewBytes: mainView.length },
+    { ok: true, indexBytes: indexHtml.length, bridgeClientBytes: bridgeClient.length, preloadBytes: preload.length, ver },
     null,
     2,
   ),

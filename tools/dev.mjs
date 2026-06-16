@@ -23,6 +23,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const WORKERS = [
   { name: "claude-code", workspace: "@jode/claude-code", dir: "apps/claude-code", url: "http://localhost:8787", env: "JODE_CLAUDE_CODE_URL" },
   { name: "opencode", workspace: "@jode/opencode", dir: "apps/opencode", url: "http://localhost:8788", env: "JODE_OPENCODE_URL" },
+  { name: "codex", workspace: "@jode/codex", dir: "apps/codex", url: "http://localhost:8789", env: "JODE_CODEX_URL" },
 ]
 
 // Auto-bootstrap .dev.vars from the example so the local Access bypass
@@ -37,7 +38,7 @@ for (const w of WORKERS) {
   }
 }
 
-const COLORS = { "claude-code": "\x1b[38;5;209m", opencode: "\x1b[38;5;141m", desktop: "\x1b[38;5;180m" }
+const COLORS = { "claude-code": "\x1b[38;5;209m", opencode: "\x1b[38;5;141m", codex: "\x1b[38;5;42m", desktop: "\x1b[38;5;180m" }
 const RESET = "\x1b[0m"
 const children = []
 let shuttingDown = false

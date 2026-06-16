@@ -16,6 +16,12 @@
     "cc:deploy": "npm run deploy --workspace @jode/claude-code",
     "cc:dry-run": "npm run dry-run --workspace @jode/claude-code",
     "oc:deploy": "npm run deploy --workspace @jode/opencode",
-    "oc:dry-run": "npm run dry-run --workspace @jode/opencode"
+    "oc:dry-run": "npm run dry-run --workspace @jode/opencode",
+    "cx:build-payload": "npm run build:payload --workspace @jode/codex",
+    "cx:gen": "npm run gen --workspace @jode/codex",
+    "cx:deploy": "npm run deploy --workspace @jode/codex",
+    "cx:dry-run": "npm run dry-run --workspace @jode/codex",
+    "deploy": "npm run cc:deploy && npm run oc:deploy && npm run cx:deploy",
+    "dry-run": "npm run cc:dry-run && npm run oc:dry-run && npm run cx:dry-run"
   }
 }
