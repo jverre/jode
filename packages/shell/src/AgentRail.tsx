@@ -1,13 +1,13 @@
-import { cn } from '@/lib/utils'
-import { LOGOS } from '@/logos'
-import { ICON_CELL, ICON_SIZE, RAIL_INSET } from '@/layout'
-import type { AgentState } from '@/jode'
+import { cn } from './lib/utils'
+import { LOGOS } from './logos'
+import { ICON_CELL, ICON_SIZE, RAIL_INSET } from './layout'
+import type { AgentStatus } from './types'
 
 interface AgentItemProps {
   id: string
   name: string
   active: boolean
-  status?: AgentState['status']
+  status?: AgentStatus
   onSelect: (id: string) => void
 }
 

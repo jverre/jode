@@ -17,7 +17,10 @@
 //   s→c {id,t:"result",ok,value|error} | {t:"push",channel,args}
 //       {t:"port-msg",portId,b64|data} | {t:"port-close",portId} | {t:"ready",...} | {t:"pong"}
 //
-// Security: WS requires ?key=<BRIDGE_KEY> (env). Never expose unauthenticated.
+// Security: the bridge is only reachable via the Worker's private DO binding,
+// which Cloudflare Access gates on every request (incl. the WS upgrade) — so
+// there is no separate bridge key (it was redundant defense-in-depth; matches
+// @jode/claude-code).
 // ─────────────────────────────────────────────────────────────────────────────
 const path = require("node:path");
 const http = require("node:http");
@@ -37,7 +40,6 @@ const WS = (() => {
 })();
 
 const PORT = Number(process.env.BRIDGE_PORT || 8787);
-const BRIDGE_KEY = process.env.BRIDGE_KEY || "dev-bridge-key";
 const CALL_TIMEOUT_MS = Number(process.env.BRIDGE_CALL_TIMEOUT_MS || 15000);
 
 const t0 = Date.now();
@@ -240,7 +242,6 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   if (reqUrl && reqUrl.pathname === "/debug-rpc") {
-    if (reqUrl.searchParams.get("key") !== BRIDGE_KEY) { res.writeHead(401); res.end("unauthorized"); return; }
     const onlyErr = reqUrl.searchParams.get("errors") === "1";
     const rows = onlyErr ? recentRpc.filter((r) => !r.ok) : recentRpc;
     res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
@@ -252,8 +253,6 @@ const server = http.createServer(async (req, res) => {
 
 const wss = new WS.Server({ server, path: "/bridge" });
 wss.on("connection", (ws, req) => {
-  const url = new URL(req.url, "http://localhost");
-  if (url.searchParams.get("key") !== BRIDGE_KEY) { log("WS rejected (bad key)"); ws.close(4001, "unauthorized"); return; }
   ws.__sub = true;
   clients.add(ws);
   log(`WS client connected (${clients.size} total)`);

@@ -34,8 +34,7 @@ type Env = {
   ALLOWED_EMAIL: string;
   /** Local-dev only: "true" in .dev.vars to skip Access. NEVER in wrangler.toml. */
   ACCESS_DEV_BYPASS?: string;
-  // ── Worker→container hop + shared filesystem + model config (via envVars) ──
-  BRIDGE_KEY: string;
+  // ── Shared filesystem + model config (injected into the container via envVars) ──
   /** S3 creds for the SHARED jode filesystem (one R2 bucket FUSE-mounted at
    *  /workspace by every tool — claude-code, opencode, codex). Secrets. */
   R2_ENDPOINT?: string;
@@ -55,7 +54,6 @@ export class CodexBridgeContainer extends Container {
     // never baked into the image). No-op once running.
     this.envVars = {
       ...this.envVars,
-      BRIDGE_KEY: env.BRIDGE_KEY ?? "dev-bridge-key",
       CODEX_BOOT_MODE: "bridge",
       R2_ENDPOINT: env.R2_ENDPOINT ?? "",
       R2_ACCESS_KEY_ID: env.R2_ACCESS_KEY_ID ?? "",
@@ -64,17 +62,13 @@ export class CodexBridgeContainer extends Container {
       OPENAI_API_KEY: env.OPENAI_API_KEY ?? "",
     };
     await this.startAndWaitForPorts();
-    // Inject the bridge key into the /bridge WS upgrade + /boot/debug so bridge.cjs
-    // accepts them (the browser never needs the key).
     const url = new URL(request.url);
     // Shared-filesystem diagnostics live on the health server (:8080).
     if (url.pathname === "/mount-status") {
       return this.containerFetch(request, 8080);
     }
-    if ((url.pathname === "/bridge" || url.pathname === "/debug-rpc") && !url.searchParams.get("key") && env.BRIDGE_KEY) {
-      url.searchParams.set("key", env.BRIDGE_KEY);
-      return this.containerFetch(new Request(url.toString(), request), BRIDGE_PORT);
-    }
+    // No bridge key: the DO binding is private and Access-gated upstream, so the
+    // bridge accepts the WS/diagnostics directly (matches @jode/claude-code).
     return this.containerFetch(request, BRIDGE_PORT);
   }
 }
@@ -127,7 +121,6 @@ export default {
     }
     if (url.pathname === "/__bridge/debug-rpc") {
       const u = new URL(request.url); u.pathname = "/debug-rpc";
-      if (env.BRIDGE_KEY) u.searchParams.set("key", env.BRIDGE_KEY);
       return bridgeStub(env).fetch(new Request(u.toString(), request));
     }
     // Shared-filesystem mount diagnostics (Access-gated like everything else).

@@ -11,12 +11,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@radix-ui/react-slot": "^1.1.0",
-    "class-variance-authority": "^0.7.0",
-    "clsx": "^2.1.1",
-    "lucide-react": "^0.460.0",
-    "simple-icons": "^16.22.0",
-    "tailwind-merge": "^2.5.4"
+    "@jode/shell": "*"
   },
   "devDependencies": {
     "@types/react": "^18.3.3",

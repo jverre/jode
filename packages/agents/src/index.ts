@@ -22,13 +22,26 @@ export interface AgentDef {
   url?: string;
 }
 
+/**
+ * Production hosted URLs — each agent is its own Cloudflare Worker on a
+ * subdomain of jode.jacquesverre.com (one Cloudflare Access app over
+ * *.jode.jacquesverre.com gates all three with a single login). The web app
+ * frames these directly; the desktop app points a native WebContentsView at them.
+ */
+export const PROD_URLS: Record<string, string> = {
+  "claude-code": "https://claude.jode.jacquesverre.com",
+  codex: "https://codex.jode.jacquesverre.com",
+  opencode: "https://opencode.jode.jacquesverre.com",
+};
+
 export const AGENTS: AgentDef[] = [
   { id: "claude-code", name: "Claude Code", shortLabel: "CC", accent: "#D97757" },
   { id: "codex", name: "Codex", shortLabel: "Cx", accent: "#10A37F" },
   { id: "opencode", name: "OpenCode", shortLabel: "OC", accent: "#7C5CFF" },
-];
+].map((a) => ({ ...a, url: PROD_URLS[a.id] }));
 
-/** Shape sent to the renderer (no internals beyond what the rail needs). */
+/** Shape sent to the rail (no internals beyond what it needs). `hosted` mirrors
+ *  whether a Worker URL is configured. */
 export function agentInfo(a: AgentDef) {
-  return { id: a.id, name: a.name, shortLabel: a.shortLabel, accent: a.accent };
+  return { id: a.id, name: a.name, shortLabel: a.shortLabel, accent: a.accent, hosted: !!a.url };
 }

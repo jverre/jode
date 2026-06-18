@@ -1,0 +1,4 @@
+# Local dev only. Copy to `.dev.vars` (gitignored) for `wrangler dev`.
+# Skips Cloudflare Access verification so the shell loads without a real Access
+# JWT. NEVER set this in wrangler.toml [vars] — production must always verify.
+ACCESS_DEV_BYPASS="true"
