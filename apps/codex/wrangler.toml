@@ -14,7 +14,8 @@ routes = [
 # Cloudflare Access gate config (non-secret). The Worker verifies the Access JWT
 # against these on every request — see @jode/auth + apps/codex/README.md.
 # Set these to your team domain, the Access application's AUD tag, and the single
-# allowed email. BRIDGE_KEY is NOT here — it's a secret: `wrangler secret put BRIDGE_KEY`.
+# allowed email. (No bridge key: the DO binding is private + Access-gated, so the
+# in-container bridge accepts the WS directly — matches @jode/claude-code.)
 [vars]
 ACCESS_TEAM_DOMAIN = "https://lucky-truth-10f2.cloudflareaccess.com"
 ACCESS_AUD = "2a4a41c1761999b8feb94c25da28f51ee10c73a17eb0b42d17cbc08c7bb05628"

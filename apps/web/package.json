@@ -1,0 +1,35 @@
+{
+  "name": "@jode/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "jode web app — the shared shell (rail) with agent panes rendered as iframes, served by a Cloudflare Worker behind the same Access app as the agents.",
+  "scripts": {
+    "dev:vite": "vite",
+    "build": "vite build",
+    "dev": "vite build && wrangler dev --port 8799",
+    "deploy": "vite build && wrangler deploy",
+    "dry-run": "vite build && wrangler deploy --dry-run",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.worker.json"
+  },
+  "dependencies": {
+    "@jode/agents": "*",
+    "@jode/auth": "*",
+    "@jode/shell": "*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260603.1",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tailwindcss": "^3.4.15",
+    "tailwindcss-animate": "^1.0.7",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.0",
+    "wrangler": "^4.20.0"
+  }
+}
