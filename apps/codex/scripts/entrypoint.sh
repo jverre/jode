@@ -53,6 +53,17 @@ phase "entrypoint:workspace:mount" "mounting shared R2 filesystem"
 MOUNT_LOG_DIR=/tmp/codex-rehost /opt/cloudflare/mount-workspace.sh || true
 phase "entrypoint:workspace:done" "mount-workspace finished"
 
+# Restore persisted auth (~/.codex) from the shared workspace (R2) so a still-valid
+# ChatGPT sign-in is reused instead of forcing re-auth every boot. Best-effort: a
+# missing/corrupt snapshot must never block boot. A background watcher keeps the
+# snapshot fresh; cleanup() takes a final one on clean shutdown.
+phase "entrypoint:creds:restore" "restoring persisted credentials"
+/opt/cloudflare/creds-sync.sh restore || true
+/opt/cloudflare/creds-sync.sh watch >/tmp/codex-rehost/creds-sync.log 2>&1 &
+CREDS_PID=$!
+echo "${CREDS_PID}" >/tmp/codex-rehost/creds-sync.pid
+phase "entrypoint:creds:watch" "pid=${CREDS_PID}"
+
 mkdir -p /root/.vnc
 chmod 700 /root/.vnc
 
@@ -121,7 +132,9 @@ phase "entrypoint:kasmvnc:spawned" "pid=${KASMVNC_PID}"
 
 cleanup() {
   phase "entrypoint:cleanup" "stopping child processes"
-  kill "${HEALTH_PID}" "${KASMVNC_PID}" "${LOGIN_PROXY_PID}" 2>/dev/null || true
+  # Final credential snapshot WHILE the mount is still up, then stop the watcher.
+  /opt/cloudflare/creds-sync.sh save || true
+  kill "${HEALTH_PID}" "${KASMVNC_PID}" "${LOGIN_PROXY_PID}" "${CREDS_PID:-}" 2>/dev/null || true
   # Unmount the shared filesystem so tigrisfs flushes its write-back cache.
   fusermount -u /workspace 2>/dev/null || umount /workspace 2>/dev/null || true
 }

@@ -1,6 +1,8 @@
 node_modules/
 out/
 dist/
+# electron-builder output (apps/desktop/release) — packaged installers, regenerable
+release/
 *.log
 .DS_Store
 .env

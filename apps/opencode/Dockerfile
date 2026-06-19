@@ -29,7 +29,18 @@ WORKDIR /workspace
 
 COPY scripts/entrypoint.sh /opt/jode/entrypoint.sh
 COPY scripts/mount-workspace.sh /opt/jode/mount-workspace.sh
-RUN chmod +x /opt/jode/entrypoint.sh /opt/jode/mount-workspace.sh
+COPY scripts/creds-sync.sh /opt/jode/creds-sync.sh
+RUN chmod +x /opt/jode/entrypoint.sh /opt/jode/mount-workspace.sh /opt/jode/creds-sync.sh
+
+# Auth persistence (creds-sync.sh): snapshot opencode's credential dir to the
+# shared R2 workspace and restore it on boot so a login survives container
+# recycling. opencode stores auth at ~/.local/share/opencode/auth.json (XDG data
+# home; HOME=/root here). Caches/logs are excluded — auth/config only.
+# NOTE: the exact path is the documented XDG default but UNVERIFIED for this
+# published binary — confirm with a real `opencode auth login` before relying on it.
+ENV AGENT=opencode
+ENV JODE_CREDS_MANIFEST="opencode-data|/root/.local/share/opencode"
+ENV JODE_CREDS_EXCLUDES="*/cache/* */log/* *.log"
 
 # opencode serve binds here; the Worker proxies to it.
 ENV OPENCODE_PORT=4096

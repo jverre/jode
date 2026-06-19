@@ -1,0 +1,79 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# electron-builder config for the jode desktop shell.
+#
+# Build flow:  npm run dist        (current OS, installers)
+#              npm run dist:mac    (dmg + zip, arm64 + x64)
+#              npm run pack        (unpacked .app for a quick local smoke test)
+#
+# electron-vite compiles main/preload/renderer into ./out; this packages that.
+# The renderer bundles @jode/shell from source (vite), so no workspace package
+# needs to ship as a runtime dependency — `out/**` is the whole app.
+# ─────────────────────────────────────────────────────────────────────────────
+appId: com.jacquesverre.jode
+productName: jode
+copyright: Copyright © 2026 Jacques Verre
+
+# In this npm-workspace monorepo `electron` is hoisted to the root node_modules,
+# so electron-builder can't infer the version from the app's local node_modules.
+# Pin it explicitly (keep in sync with devDependencies.electron).
+electronVersion: 33.4.11
+
+directories:
+  output: release
+  buildResources: build
+
+# electron-vite emits everything under out/; that plus package.json is the app.
+files:
+  - out/**/*
+  - package.json
+
+# No native modules in the desktop shell — skip the rebuild step (faster, avoids
+# monorepo hoist confusion).
+npmRebuild: false
+
+mac:
+  category: public.app-category.developer-tools
+  icon: build/icon.png
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  # Hardened runtime + entitlements are required for notarization. They are
+  # harmless when building UNSIGNED locally (electron-builder ad-hoc signs).
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  # Notarization OFF by default so local/CI builds without Apple credentials still
+  # succeed (unsigned). To ship signed+notarized, set this to an object and provide
+  # CSC_LINK / CSC_KEY_PASSWORD (Developer ID .p12) + APPLE_ID /
+  # APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID in the environment.
+  notarize: false
+
+dmg:
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
+
+win:
+  icon: build/icon.png
+  target:
+    - target: nsis
+      arch: [x64]
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+
+linux:
+  icon: build/icon.png
+  category: Development
+  target:
+    - AppImage
+    - deb

@@ -20,6 +20,14 @@ mkdir -p "$WORKSPACE"
 
 /opt/jode/mount-workspace.sh || true
 
+# Restore persisted opencode auth (~/.local/share/opencode) from the shared
+# workspace (R2) so credentials survive container recycling instead of forcing a
+# re-login every boot. Best-effort — a missing/corrupt snapshot must not block
+# boot. A background watcher keeps it fresh; shutdown() takes a final snapshot.
+/opt/jode/creds-sync.sh restore || true
+/opt/jode/creds-sync.sh watch >/tmp/creds-sync.log 2>&1 &
+CREDS=$!
+
 # --hostname 0.0.0.0 so the Worker proxy can reach it from outside the container.
 log "starting opencode serve on 0.0.0.0:${PORT}"
 opencode serve --hostname 0.0.0.0 --port "$PORT" &
@@ -27,6 +35,9 @@ SERVER=$!
 
 shutdown() {
   log "signal received; stopping server and unmounting workspace"
+  # Final credential snapshot WHILE the mount is still up, then stop the watcher.
+  /opt/jode/creds-sync.sh save || true
+  kill "$CREDS" 2>/dev/null || true
   kill -TERM "$SERVER" 2>/dev/null || true
   wait "$SERVER" 2>/dev/null || true
   fusermount -u "$WORKSPACE" 2>/dev/null || umount "$WORKSPACE" 2>/dev/null || true

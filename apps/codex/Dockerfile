@@ -111,7 +111,8 @@ COPY scripts/xstartup.sh /opt/cloudflare/xstartup.sh
 COPY scripts/health-server.mjs /opt/cloudflare/health-server.mjs
 COPY scripts/login-callback-proxy.mjs /opt/cloudflare/login-callback-proxy.mjs
 COPY scripts/mount-workspace.sh /opt/cloudflare/mount-workspace.sh
-RUN chmod +x /opt/cloudflare/entrypoint.sh /opt/cloudflare/xstartup.sh /opt/cloudflare/mount-workspace.sh
+COPY scripts/creds-sync.sh /opt/cloudflare/creds-sync.sh
+RUN chmod +x /opt/cloudflare/entrypoint.sh /opt/cloudflare/xstartup.sh /opt/cloudflare/mount-workspace.sh /opt/cloudflare/creds-sync.sh
 
 # Bridge server last — iterating on it must not invalidate the npm/electron layer.
 # Codex bundles `ws` into its vite build, so it's not a standalone module in the
@@ -122,6 +123,14 @@ RUN cd /opt/bridge && npm init -y >/dev/null 2>&1 && npm install ws@8 >/dev/null
 
 ENV CODEX_REHOST_FORCE_PLATFORM=linux
 ENV CODEX_LINUX_REHOST=1
+# Auth persistence (creds-sync.sh): snapshot ~/.codex (the ChatGPT sign-in
+# auth.json + config.toml) to the shared R2 workspace and restore it on boot, so
+# a still-valid session survives container recycling. CODEX_HOME is pinned to the
+# default so the path is explicit. Session rollouts/logs are excluded — auth only.
+ENV CODEX_HOME=/root/.codex
+ENV AGENT=codex
+ENV JODE_CREDS_MANIFEST="codex-home|/root/.codex"
+ENV JODE_CREDS_EXCLUDES="*/sessions/* */log/* *.log"
 # The app resolves its agent backend (the codex rust app-server) via CODEX_CLI_PATH.
 # Point it at the native binary inside the globally-installed @openai/codex package
 # (the `codex` on PATH is only a JS wrapper). Without this the app shows

@@ -100,7 +100,8 @@ RUN apt-get update \
   && apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
   && tigrisfs --version
 COPY scripts/mount-workspace.sh /opt/cloudflare/mount-workspace.sh
-RUN chmod +x /opt/cloudflare/mount-workspace.sh
+COPY scripts/creds-sync.sh /opt/cloudflare/creds-sync.sh
+RUN chmod +x /opt/cloudflare/mount-workspace.sh /opt/cloudflare/creds-sync.sh
 
 # Bridge server last — iterating on it must not invalidate the npm/electron layer.
 # Bump JODE_BRIDGE_REV whenever bridge/ changes must force a new image: wrangler's
@@ -113,6 +114,15 @@ COPY bridge/ /opt/bridge/
 ENV CLAUDE_REHOST_FORCE_PLATFORM=linux
 ENV CLAUDE_LINUX_REHOST=1
 ENV ELECTRON_DISABLE_SECURITY_WARNINGS=true
+# Auth persistence (creds-sync.sh): the claude.ai session lives in Electron's
+# profile (session.defaultSession cookies — see bridge.cjs). xstartup.sh pins the
+# profile to CLAUDE_PROFILE_DIR via --user-data-dir; creds-sync snapshots it to
+# the shared R2 workspace and restores it on boot so a valid login is reused.
+# Caches/crashpad/locks are excluded — keep only Cookies / Local Storage / IndexedDB.
+ENV CLAUDE_PROFILE_DIR=/root/.jode-profile
+ENV AGENT=claude-code
+ENV JODE_CREDS_MANIFEST="profile|/root/.jode-profile"
+ENV JODE_CREDS_EXCLUDES="*Cache* *Crashpad* *blob_storage* *Singleton* *.log *.lock"
 # Xvfb virtual display for headless Electron (see entrypoint.sh). DISPLAY is the
 # X display number; SCREEN_GEOMETRY sizes the in-memory framebuffer (WxH).
 ENV DISPLAY=:1
