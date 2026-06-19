@@ -1,6 +1,5 @@
 // @jode/shell — the shared jode UI shell (rail + window chrome), rendered
-// identically by the desktop app and the web app. Pane content is supplied by
-// the host (native WebContentsViews on desktop, <iframe>s on web) so everything
+// identically by host apps. Pane content is supplied by the host so everything
 // except the panes is one codebase.
 
 export { Shell, type ShellProps } from './Shell'

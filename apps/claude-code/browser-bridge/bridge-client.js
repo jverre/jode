@@ -152,21 +152,13 @@
   function removeAllListeners(channel) { if (channel === undefined) listeners.clear(); else listeners.delete(channel); return ipcRenderer; }
 
   // The preload reads {error, result} from sendSync. Replay the real envelope
-  // captured by the bridge (/boot.sync); fall back to a safe envelope so we never
-  // return undefined (which would crash the preload's `e.error`/`e.result` read).
+  // captured by the bridge (/boot.sync); missing boot data is a bridge error.
   function sendSync(channel) {
     var logical = logicalOf(channel);
     if (syncEnvelopes && Object.prototype.hasOwnProperty.call(syncEnvelopes, logical)) {
       return syncEnvelopes[logical];
     }
-    warnOnce(warned, channel, "sendSync envelope missing for " + logical + " (using fallback)");
-    return { error: null, result: syncFallbackResult(logical) };
-  }
-  function syncFallbackResult(logical) {
-    if (/\.\$store\$\.getStateSync$/.test(logical)) return {};
-    if (/\.getInitialLocale$/.test(logical)) return navigator.language || "en-US";
-    if (/\.(isHostLoopModeEnabled|isHostLoopDevOverrideActive|isAvailable)$/.test(logical)) return false;
-    return null;
+    throw new Error("bridge boot snapshot missing sendSync envelope for " + logical);
   }
 
   function send(channel) {
@@ -191,7 +183,7 @@
     invoke: invoke,
     on: on, addListener: on, once: function (ch, fn) { var wrap = function () { removeListener(ch, wrap); return fn.apply(null, arguments); }; return on(ch, wrap); },
     removeListener: removeListener, off: removeListener, removeAllListeners: removeAllListeners,
-    send: send, sendSync: sendSync, postMessage: function () { /* MessagePort path: TODO Phase 4 */ },
+    send: send, sendSync: sendSync, postMessage: function () { /* MessagePort bridge is intentionally not implemented here. */ },
     sendToHost: function () {},
   };
   // DISABLED: do NOT neutralise chatIn3p. Exhaustively tested forcing the SPA flag
@@ -241,8 +233,7 @@
   // ── load + run the REAL preload under the shim (synchronous, before SPA) ────
   function requireShim(spec) {
     if (spec === "electron" || spec === "electron/renderer" || spec === "electron/common") return electronShim;
-    warnOnce(warned, "require:" + spec, "preload required unexpected module: " + spec + " (returning {})");
-    return {};
+    throw new Error("preload required unexpected module: " + spec);
   }
 
   // The preload only exposes the desktop API when window.location.origin is an
@@ -285,17 +276,6 @@
   }
 
   var BOOT_URL = window.__BRIDGE_BOOT_URL__ || "/__bridge/boot";
-  // Fallback desktop boot args (used only if the bridge hasn't captured the real
-  // ones yet — e.g. a cold-start race). Mirrors the values that previously
-  // reached login; real args from /boot are preferred.
-  var FALLBACK_ARGV = [
-    "claude",
-    "--desktop-features={}",
-    '--desktop-enterprise-config={"deploymentMode":"browser"}',
-    '--desktop-telemetry-config={"deploymentMode":"1p","appVersion":"1.10628.0"}',
-    "--desktop-nest-local-username=browser",
-  ];
-
   var preloadProcess = null; // the argv-bearing process passed INTO the preload
   function setupProcess(argv) {
     var p = window.process && typeof window.process === "object" ? window.process : {};
@@ -332,10 +312,11 @@
           log("boot argv from bridge:", boot.argv.length, "args");
           return boot.argv;
         }
-        warnOnce(warned, "boot-not-ready", "bridge /boot not ready; using fallback desktop args");
+        throw new Error("bridge /boot is not ready");
       }
-    } catch (e) { warnOnce(warned, "boot-fetch", "boot fetch failed; using fallback: " + (e && e.message)); }
-    return FALLBACK_ARGV;
+    } catch (e) {
+      throw new Error("bridge boot fetch failed: " + (e && e.message ? e.message : e));
+    }
   }
 
   function loadPreloadSync() {

@@ -46,15 +46,19 @@ log "electron package version=${ELECTRON_PKG_VERSION}"
 log "app package version=${APP_PKG_VERSION}"
 phase "entrypoint:environment" "versions recorded"
 
-# Mount the SHARED jode filesystem (one R2 bucket, FUSE) at /workspace — all
-# tools (claude-code, opencode, codex) see the same live files. No-op (local
-# ephemeral dir) when R2 creds are absent.
+# Mount the SHARED jode filesystem (one R2 bucket, FUSE) at /workspace. This must
+# succeed.
 phase "entrypoint:workspace:mount" "mounting shared R2 filesystem"
-MOUNT_LOG_DIR=/tmp/claude-rehost /opt/cloudflare/mount-workspace.sh || true
+MOUNT_LOG_DIR=/tmp/claude-rehost /opt/cloudflare/mount-workspace.sh
 phase "entrypoint:workspace:done" "mount-workspace finished"
 
 log "starting health server"
 phase "entrypoint:health-server:start" "launching health server"
+JODE_REHOST_TMP=/tmp/claude-rehost \
+JODE_HEALTH_PROCESS_PATTERN="electron|xstartup|xvfb|health-server|node" \
+JODE_HEALTH_PIDS="xvfb:xvfb.pid" \
+JODE_HEALTH_LOGS="xvfb:xvfb.log" \
+JODE_HEALTH_FILE_CHECKS="appMain:app/.vite/build/index.pre.js,rendererIndex:app/resources/ion-dist/index.html" \
 node /opt/cloudflare/health-server.mjs >/tmp/claude-rehost/health-server.log 2>&1 &
 HEALTH_PID=$!
 echo "${HEALTH_PID}" >/tmp/claude-rehost/health-server.pid

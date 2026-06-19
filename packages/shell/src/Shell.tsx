@@ -11,19 +11,17 @@ import {
 import type { AgentInfo, AgentStatus, ShellHost } from './types'
 
 export interface ShellProps {
-  /** Wires the rail to a pane implementation (native views or iframes). */
+  /** Wires the rail to a pane implementation. */
   host: ShellHost
   /**
    * Renders the active agent's pane content inside the framed slot. Desktop
-   * returns `null` — a native WebContentsView floats over the slot; web returns
-   * an `<iframe>`. The slot itself (geometry, border inset) is owned by the
-   * shell so both surfaces line up identically.
+   * returns `null` because a native WebContentsView floats over the slot.
    */
   renderPane?: (active: AgentInfo | null, agents: AgentInfo[]) => ReactNode
 }
 
 /**
- * The shared jode shell: the rail + window chrome, identical on desktop and web.
+ * The shared jode shell: the rail + window chrome.
  * It owns selection/state and delegates only the pane content to the host.
  */
 export function Shell({ host, renderPane }: ShellProps): JSX.Element {
@@ -70,7 +68,7 @@ export function Shell({ host, renderPane }: ShellProps): JSX.Element {
         style={{ right: 0, height: TITLEBAR_HEIGHT }}
       />
 
-      {/* Bordered frame for the agent pane. The pane (native view or iframe) is
+      {/* Bordered frame for the agent pane. The pane is
           inset BORDER px inside it, so only this frame's border shows — a light
           ring around the pane that the active tab merges into. */}
       <div
@@ -85,8 +83,7 @@ export function Shell({ host, renderPane }: ShellProps): JSX.Element {
       />
 
       {/* Pane slot — same geometry as ViewManager's native bounds (inset BORDER
-          inside the frame). Desktop leaves it empty (a native view floats here);
-          web fills it with an <iframe>. */}
+          inside the frame). Desktop leaves it empty; a native view floats here. */}
       <div
         className="region-no-drag absolute overflow-hidden"
         style={{

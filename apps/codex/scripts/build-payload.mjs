@@ -1,8 +1,7 @@
 // build-payload.mjs — rebuild the OpenAI Codex "linux-rehost" payload from the
 // installed macOS Codex app, fully self-contained. Produces `payload/linux-rehost/`,
 // which the Dockerfile bakes into the container image and wrangler serves as
-// static assets (the `webview/` SPA). Sibling of apps/claude-code's script;
-// see plans/june-2026/04-cloudflare-codex.md.
+// static assets (the `webview/` SPA). Sibling of apps/claude-code's script.
 //
 // Codex differs from Claude Desktop in ways that simplify *and* complicate this:
 //   • The renderer (`webview/`) lives INSIDE app.asar — no external ion-dist/i18n

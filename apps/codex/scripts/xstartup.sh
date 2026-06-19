@@ -56,7 +56,7 @@ trap 'EXIT_CODE=$?; echo "${EXIT_CODE}" > /tmp/codex-rehost/electron.exit; phase
 # --js-flags=--jitless is OFF by default: Cloudflare's firecracker runtime
 # supports JIT, and jitless cripples renderer JS (every keystroke re-renders
 # React interpreted) which dominates typing latency. Set CODEX_REHOST_JITLESS=1
-# to re-enable as a fallback if CF boot regresses.
+# only for explicit runtime diagnostics.
 JS_FLAGS=""
 if [ "${CODEX_REHOST_JITLESS:-0}" = "1" ]; then
   JS_FLAGS="--js-flags=--jitless"
@@ -70,7 +70,7 @@ ANTI_THROTTLE_FLAGS="--disable-renderer-backgrounding --disable-backgrounding-oc
 # Software GL (swiftshader) instead of --disable-gpu: Codex's webview probes the
 # GPU and busy-loops if GPU access is fully disabled with no rasterizer. swiftshader
 # gives a CPU GL implementation so the compositor/WebGL succeed headless.
-# CODEX_GL overrides (e.g. "disabled" to fall back to --disable-gpu).
+# CODEX_GL overrides the default (e.g. "disabled" uses --disable-gpu).
 case "${CODEX_GL:-swiftshader}" in
   disabled) GL_FLAGS="--disable-gpu" ;;
   *)        GL_FLAGS="--use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader --disable-gpu-sandbox" ;;
@@ -78,18 +78,19 @@ esac
 COMMON_FLAGS="--no-sandbox --disable-dev-shm-usage ${GL_FLAGS} ${ANTI_THROTTLE_FLAGS} ${JS_FLAGS}"
 log "electron flags: ${COMMON_FLAGS:-<jit-enabled>}"
 
-# Boot mode (CODEX_BOOT_MODE):
-#   direct  → launch `electron .` (rehost package main = bootstrap.cjs → Codex's
-#             own .vite/build/bootstrap.js). Proves the headless boot end-to-end
-#             under the KasmVNC display, independent of any bridge. DEFAULT.
-#   bridge  → launch the WS relay (/opt/bridge/bridge.cjs). NOTE: bridge.cjs is
-#             still the Claude relay; the Codex bridge (webview + app-server IPC)
-#             is WIP — see apps/codex/README.md / plan 04.
+# Boot mode:
+#   bridge → production path: launch the WS relay (/opt/bridge/bridge.cjs).
+#   direct → debug only, and requires JODE_DEBUG_BOOT=1.
 # shellcheck disable=SC2086
-if [ "${CODEX_BOOT_MODE:-direct}" = "bridge" ]; then
+BOOT_MODE="${CODEX_BOOT_MODE:-bridge}"
+if [ "${BOOT_MODE}" = "bridge" ]; then
   log "boot mode: bridge — entry /opt/bridge/bridge.cjs (WS /bridge on :${BRIDGE_PORT:-8787})"
   ./node_modules/.bin/electron /opt/bridge/bridge.cjs ${COMMON_FLAGS} >"${REHOST_LOG}" 2>&1 &
 else
+  if [ "${BOOT_MODE}" != "direct" ] || [ "${JODE_DEBUG_BOOT:-0}" != "1" ]; then
+    log "unsupported boot mode '${BOOT_MODE}' (direct requires JODE_DEBUG_BOOT=1)"
+    exit 64
+  fi
   log "boot mode: direct — launching the Codex app headless (electron . → bootstrap.cjs)"
   ./node_modules/.bin/electron . ${COMMON_FLAGS} >"${REHOST_LOG}" 2>&1 &
 fi

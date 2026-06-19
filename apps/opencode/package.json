@@ -2,17 +2,16 @@
   "name": "@jode/opencode",
   "private": true,
   "type": "module",
-  "description": "jode remote environment — Worker + Durable Object + Container serving the OpenCode web UI, with R2-persisted /workspace (sibling of @jode/claude-code for Claude Code; see plan 02).",
+  "description": "jode remote environment — Worker + Durable Object + Container serving the OpenCode web UI.",
   "scripts": {
-    "deploy": "wrangler deploy",
-    "dry-run": "wrangler deploy --dry-run",
-    "dev": "wrangler dev --port 8788 --inspector-port 9230",
+    "deploy": "node ../../tools/sync-runtime.mjs && wrangler deploy",
+    "dry-run": "node ../../tools/sync-runtime.mjs && wrangler deploy --dry-run",
     "tail": "wrangler tail",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@cloudflare/containers": "^0.0.21",
-    "@jode/auth": "*"
+    "@jode/edge": "*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260603.1",

@@ -1,6 +1,6 @@
 // Shell types. The shell renders the rail + window chrome and is deliberately
 // host-agnostic: it never imports Electron or touches `window.jode` directly.
-// A host (desktop or web) supplies the agent list, switching, and state.
+// A host supplies the agent list, switching, and state.
 
 export interface AgentInfo {
   id: string
@@ -9,8 +9,8 @@ export interface AgentInfo {
   shortLabel: string
   /** Accent colour for the rail badge. */
   accent: string
-  /** Whether this agent has a hosted Worker URL (vs. a local placeholder). */
-  hosted: boolean
+  /** Hosted Worker URL for the agent UI. */
+  url: string
 }
 
 export type AgentStatus = 'idle' | 'loading' | 'ready' | 'login' | 'error'
@@ -23,9 +23,8 @@ export interface AgentState {
 
 /**
  * The seam between the shared shell and its environment. Desktop implements this
- * over `window.jode` (IPC → native WebContentsView panes); web implements it
- * over a static agent registry (panes are <iframe>s). The rail only ever talks
- * to a `ShellHost`, so the chrome is identical across both surfaces.
+ * over `window.jode` (IPC -> native WebContentsView panes). The rail only ever
+ * talks to a `ShellHost`.
  */
 export interface ShellHost {
   /** The agents to show in the rail, in order. */

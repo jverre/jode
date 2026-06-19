@@ -55,8 +55,8 @@ function isSyncChannel(logical) {
 const clients = new Set(); // ws connections (for push fan-out)
 // GLOBAL ipcMain handlers (the ~13 legacy non-eipc channels like
 // list-mcp-servers, connect-to-mcp-server, cu-teach:*) register on the global
-// electron.ipcMain — NOT on a webContents — so capture them too and use as a
-// fallback when a channel isn't in the main view's scoped registry.
+// electron.ipcMain — NOT on a webContents — so capture them too when a channel
+// isn't in the main view's scoped registry.
 const globalHandlers = { handle: new Map(), on: new Map() };
 (function patchGlobalIpcMain() {
   const ipc = electron.ipcMain;
@@ -167,7 +167,7 @@ electron.app.on("web-contents-created", (_e, wc) => {
       } else if ((attempt || 0) < 8) {
         setTimeout(() => captureBootArgv((attempt || 0) + 1), 750);
       } else {
-        log("boot argv capture: desktop globals never appeared (browser will use fallback)");
+        log("boot argv capture: desktop globals never appeared");
       }
     } catch (e) {
       if ((attempt || 0) < 8) setTimeout(() => captureBootArgv((attempt || 0) + 1), 750);
@@ -176,8 +176,8 @@ electron.app.on("web-contents-created", (_e, wc) => {
   };
   // Build real {error,result} envelopes for the 15 sync channels. For store
   // getStateSync we call the proven async getState HANDLE channel (real value);
-  // for the 4 method sync channels we invoke the sync handler and fall back to a
-  // sensible default. The renderer's sendSync replays these envelopes.
+  // for the 4 method sync channels we invoke the sync handler. The renderer's
+  // sendSync replays these envelopes.
   const buildSyncSnapshot = async () => {
     const snap = {};
     const handleByLogical = new Map();
@@ -361,6 +361,13 @@ async function setLastActiveOrg(org, st) {
   log(`[org] mirrored lastActiveOrg=${org} into ${targets.length} session(s) for main-process Sr()`);
   return true;
 }
+// Cookies safe + durable to persist across container recycles (used ONLY by
+// /auth-cookies, the persistence endpoint). We allowlist the login session and
+// the active-org hint and NEVER persist cf_clearance/__cf_bm/Turnstile: those
+// are IP+UA-bound bot-clearance cookies that go stale when the container's
+// egress IP changes, and re-injecting a stale one crash-looped boot. They are
+// re-minted automatically per IP on first load — exactly like a real browser.
+const PERSIST_COOKIE_NAMES = new Set(["sessionKey", "lastActiveOrg"]);
 const server = http.createServer(async (req, res) => {
   const reqUrl = (() => { try { return new URL(req.url, "http://localhost"); } catch { return null; } })();
   if (reqUrl && reqUrl.pathname === "/session") {
@@ -591,7 +598,13 @@ const server = http.createServer(async (req, res) => {
       const st = mainState();
       const ses = st && st.wc && st.wc.session ? st.wc.session : electron.session.defaultSession;
       const all = await ses.cookies.get({});
-      const wanted = all.filter((c) => /(^|\.)(claude\.ai|claude\.com|anthropic\.com)$/.test(c.domain || ""));
+      // Persist ONLY durable, IP-independent login cookies. cf_clearance/__cf_bm/
+      // Turnstile are deliberately excluded here (they ARE returned by /session
+      // for LIVE proxying) — they're IP+UA-bound and re-injecting a stale one on a
+      // recycled container crash-looped the renderer. See PERSIST_COOKIE_NAMES.
+      const wanted = all.filter((c) =>
+        /(^|\.)(claude\.ai|claude\.com|anthropic\.com)$/.test(c.domain || "") &&
+        PERSIST_COOKIE_NAMES.has(c.name));
       const cookies = wanted.map((c) => {
         const domain = (c.domain || "").replace(/^\./, "");
         return { url: `https://${domain}${c.path || "/"}`, name: c.name, value: c.value,

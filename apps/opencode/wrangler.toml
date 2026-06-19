@@ -12,7 +12,7 @@ routes = [
 ]
 
 # Cloudflare Access gate config (non-secret). The Worker verifies the Access JWT
-# against these on every request — including the WebSocket upgrade — via @jode/auth.
+# against these on every request — including the WebSocket upgrade — via @jode/edge.
 # Same single-email Zero Trust model as @jode/claude-code. Set these to your team
 # domain, the Access application's AUD tag, and the single allowed email.
 [vars]

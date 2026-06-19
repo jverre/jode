@@ -1,10 +1,9 @@
-# @jode/claude-code — remote environment (plan 02)
+# @jode/claude-code — remote environment
 
 Worker → Durable Object → Container stack that runs the Claude Desktop app
 headless in a Cloudflare container and serves its **real renderer SPA** to the
 browser, wired back to the headless Electron main process over a `/bridge`
-WebSocket relay. Lifted from the `cloudflare-split` prototype; see
-[`../../plans/june-2026/02-cloudflare-claude-code.md`](../../plans/june-2026/02-cloudflare-claude-code.md).
+WebSocket relay.
 
 ## Layout
 
@@ -18,9 +17,8 @@ apps/claude-code/
 │   ├── build-payload.mjs   # rebuilds payload/ from /Applications/Claude.app (self-contained)
 │   ├── gen-assets.mjs      # bundles SPA assets into src/generated-assets.ts
 │   ├── entrypoint.sh       # container supervisor (health → Xvfb → Electron bridge)
-│   ├── xstartup.sh         # launches headless Electron + bridge under the Xvfb display
-│   ├── install-electron-linux.sh
-│   └── health-server.mjs
+│   └── xstartup.sh         # launches headless Electron + bridge under the Xvfb display
+├── .runtime/               # GENERATED, gitignored — shared container scripts
 ├── Dockerfile              # container image (bakes payload/ + bridge/)
 ├── wrangler.toml
 └── payload/linux-rehost/   # GENERATED, gitignored — the rehosted app bundle
@@ -59,7 +57,7 @@ mechanism**. Security is now two layers:
 
 1. **Cloudflare Access** fronts the Worker hostname (the IdP-backed front door,
    policy = one allowed email). Access injects a signed JWT on every request.
-2. **The Worker verifies that JWT** (`@jode/auth` → `verifyAccessJwt`) on *every*
+2. **The Worker verifies that JWT** (`@jode/edge`) on *every*
    request including the `/bridge` WebSocket upgrade — RS256 signature against the
    team's JWKS, `iss`, `aud`, `exp`, and `email` claim. Fails closed.
 
@@ -88,10 +86,8 @@ npm run deploy
 ```
 
 Any identity that is not the allowlisted email is rejected at the edge (401/403).
-For local `wrangler dev`, copy `.dev.vars.example` → `.dev.vars`.
 
-## Other known gaps
+## Workspace persistence
 
-Beyond auth, this is the prototype lifted faithfully — see the prototype's gap
-analysis for chat-send, session persistence, and incremental SSE streaming.
-Persistent `/workspace` + the remote sync agent are later build-order steps.
+`/workspace` is a live `tigrisfs` mount of the shared `jode-workspace` R2 bucket.
+Production fails closed if the mount cannot start.

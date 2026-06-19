@@ -5,8 +5,8 @@ export interface AgentInfo {
   name: string
   shortLabel: string
   accent: string
-  /** Whether this agent has a hosted Worker URL (vs. the local placeholder). */
-  hosted: boolean
+  /** Hosted Worker URL for the agent UI. */
+  url: string
 }
 
 export interface AgentState {

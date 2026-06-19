@@ -11,7 +11,15 @@
 // Leaves the existing KasmVNC worker untouched (separate name/binding).
 // ─────────────────────────────────────────────────────────────────────────────
 import { Container } from "@cloudflare/containers";
-import { verifyAccessJwt, extractAccessToken, AuthError } from "@jode/auth";
+import {
+  durableObjectStub,
+  enforceAccess,
+  htmlResponse,
+  jsResponse,
+  sharedWorkspaceEnv,
+  type AccessEnv,
+  type WorkspaceMountEnv,
+} from "@jode/edge";
 import { INDEX_HTML, BRIDGE_CLIENT_JS, MAINVIEW_JS } from "./generated-assets";
 
 const UPSTREAM_ORIGIN = "https://claude.ai";
@@ -19,33 +27,21 @@ const BRIDGE_PORT = 8787;
 const PROXY_PATH_PREFIXES = ["/api/", "/edge-api/", "/cdn-cgi/", "/v1/", "/ent_api/", "/account_api/"];
 const LOCAL_ASSET_PREFIXES = ["/assets/", "/audio/", "/favicon.ico", "/i18n/", "/images/", "/manifest.json", "/robots.txt"];
 
-type Env = {
+// Persisted-auth capture cadence: the DO snapshots the bridge's filtered durable
+// cookies (sessionKey + lastActiveOrg) to its own storage at most this often, so
+// a still-valid login survives the next container recycle without re-login.
+const CAPTURE_INTERVAL_MS = 60_000;
+
+type Env = AccessEnv & WorkspaceMountEnv & {
   ASSETS: Fetcher;
   CLAUDE_BRIDGE: DurableObjectNamespace;
-  // ── Cloudflare Access gate (verified by @jode/auth) ──
-  /** Team domain / JWT issuer, e.g. https://<team>.cloudflareaccess.com */
-  ACCESS_TEAM_DOMAIN: string;
-  /** Access application audience tag (the `aud` claim to require). */
-  ACCESS_AUD: string;
-  /** The single allowed email address. */
-  ALLOWED_EMAIL: string;
-  /** Local-dev only: set to "true" in .dev.vars to skip Access verification.
-   *  NEVER set in wrangler.toml [vars] — production must always verify. */
-  ACCESS_DEV_BYPASS?: string;
-  // ── Shared filesystem (injected via envVars) ──
-  /** S3 creds for the SHARED jode filesystem (one R2 bucket FUSE-mounted at
-   *  /workspace by every tool — claude-code, opencode, codex). Endpoint e.g.
-   *  https://<ACCOUNT_ID>.r2.cloudflarestorage.com. Secrets. */
-  R2_ENDPOINT?: string;
-  R2_ACCESS_KEY_ID?: string;
-  R2_SECRET_ACCESS_KEY?: string;
-  R2_BUCKET?: string;
 };
 
 export class ClaudeBridgeContainer extends Container {
   defaultPort = BRIDGE_PORT;
   requiredPorts = [BRIDGE_PORT];
-  private cleared = false;
+  private restored = false;
+  private lastCaptureAt = 0;
 
   override async fetch(request: Request): Promise<Response> {
     // Inject the shared-filesystem mount creds into the container BEFORE it
@@ -55,54 +51,60 @@ export class ClaudeBridgeContainer extends Container {
     const env = this.env as Env;
     this.envVars = {
       ...this.envVars,
-      // Shared filesystem mount creds (see mount-workspace.sh). Empty → the
-      // container runs with a local, ephemeral /workspace.
-      R2_ENDPOINT: env.R2_ENDPOINT ?? "",
-      R2_ACCESS_KEY_ID: env.R2_ACCESS_KEY_ID ?? "",
-      R2_SECRET_ACCESS_KEY: env.R2_SECRET_ACCESS_KEY ?? "",
-      R2_BUCKET: env.R2_BUCKET ?? "",
+      ...sharedWorkspaceEnv(env),
     };
 
     await this.startAndWaitForPorts();
-    // The persisted cookies were stale/out-of-date; restoring them injected a dead
-    // claude.ai session into the renderer on boot. Removed: one-time delete of the
-    // cache, NO restore, NO capture — plain proxy until a correct re-auth path
-    // exists. (User: "remove the persisted cookies because they are out of date".)
-    if (!this.cleared) {
-      this.cleared = true;
-      try { await this.ctx.storage.delete("authCookies"); console.log("[auth-cache] cleared stale persisted cookies"); } catch {}
-    }
+    // Auth persistence: re-inject the durable login cookies once on a fresh
+    // container, then periodically re-snapshot them. Only sessionKey + the org
+    // hint are stored — the bridge's /auth-cookies endpoint filters out the
+    // IP-bound cf_clearance/Turnstile cookies whose stale re-injection previously
+    // crash-looped boot. cf_clearance re-mints per IP on first load (like a
+    // browser), so the restored login authenticates without the stale clearance.
+    await this.restoreCookiesOnce();
+    await this.maybeCaptureCookies();
     return this.containerFetch(request, BRIDGE_PORT);
   }
-}
 
-// ── Cloudflare Access gate ────────────────────────────────────────────────---
-// Verify the Access JWT on EVERY request (incl. the /bridge WS upgrade) before
-// any routing. Fail closed: missing config → 503; missing/invalid identity →
-// 401/403. This is the PRIMARY authentication — the privileged bridge is never
-// reachable without a verified, allowlisted Access identity. Replaces the
-// prototype's hardcoded shared key as the user-auth mechanism.
-async function enforceAccess(request: Request, env: Env): Promise<Response | null> {
-  // Local `wrangler dev` can't mint a real Access JWT, so allow an explicit
-  // opt-out that lives ONLY in .dev.vars (never in wrangler.toml [vars]). This
-  // lets the desktop webview load the agent during `npm run dev`.
-  if (env.ACCESS_DEV_BYPASS === "true") return null;
-  if (!env.ACCESS_TEAM_DOMAIN || !env.ACCESS_AUD || !env.ALLOWED_EMAIL) {
-    return new Response("Access not configured (ACCESS_TEAM_DOMAIN / ACCESS_AUD / ALLOWED_EMAIL)", { status: 503 });
+  /** Re-inject persisted durable login cookies on the first request after a
+   *  fresh container start. Best-effort: a missing store or bridge error must
+   *  never block serving. */
+  private async restoreCookiesOnce(): Promise<void> {
+    if (this.restored) return;
+    this.restored = true;
+    try {
+      const cookies = (await this.ctx.storage.get("authCookies")) as unknown[] | undefined;
+      if (!cookies || !cookies.length) { console.log("[auth-cache] no persisted cookies to restore"); return; }
+      const resp = await this.containerFetch(
+        new Request("http://bridge/restore-cookies", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ cookies }),
+        }),
+        BRIDGE_PORT,
+      );
+      console.log(`[auth-cache] restore-cookies → ${resp.status}`);
+    } catch (e) { console.log(`[auth-cache] restore failed: ${(e as Error).message}`); }
   }
-  const token = extractAccessToken(request);
-  if (!token) return new Response("unauthorized: no Cloudflare Access token", { status: 401 });
-  try {
-    await verifyAccessJwt(token, {
-      teamDomain: env.ACCESS_TEAM_DOMAIN,
-      aud: env.ACCESS_AUD,
-      allowedEmail: env.ALLOWED_EMAIL,
-    });
-    return null; // authorized
-  } catch (e) {
-    const status = e instanceof AuthError ? e.status : 403;
-    console.log(`[access] rejected: ${(e as Error).message}`);
-    return new Response("forbidden", { status });
+
+  /** Snapshot the bridge's filtered durable cookies to DO storage, throttled to
+   *  CAPTURE_INTERVAL_MS. Container alarms are owned by the base class, so we
+   *  capture opportunistically on the request path instead of via setAlarm().
+   *  Only overwrites when authed, so a logged-out blip never clobbers a good
+   *  snapshot. */
+  private async maybeCaptureCookies(): Promise<void> {
+    const now = Date.now();
+    if (now - this.lastCaptureAt < CAPTURE_INTERVAL_MS) return;
+    this.lastCaptureAt = now; // set before await so concurrent requests don't pile up
+    try {
+      const resp = await this.containerFetch(new Request("http://bridge/auth-cookies"), BRIDGE_PORT);
+      if (!resp.ok) return;
+      const j = (await resp.json()) as { authed?: boolean; cookies?: unknown[] };
+      if (j.authed && j.cookies && j.cookies.length) {
+        await this.ctx.storage.put("authCookies", j.cookies);
+        console.log(`[auth-cache] captured ${j.cookies.length} durable cookie(s)`);
+      }
+    } catch (e) { console.log(`[auth-cache] capture failed: ${(e as Error).message}`); }
   }
 }
 
@@ -111,10 +113,8 @@ function bridgeStub(env: Env) {
   // the same instance. The DO is a plain proxy: no auth-cookie persistence (the
   // earlier cache held stale cookies and the onStart restore crash-looped the
   // container — both removed). Bumping this name forces a fresh container/storage;
-  // only do that to recover a wedged instance, not as routine iteration (use
-  // `wrangler dev` locally for that).
-  const id = env.CLAUDE_BRIDGE.idFromName("primary-weur-keyless1");
-  return env.CLAUDE_BRIDGE.get(id, { locationHint: "weur" });
+  // only do that to recover a wedged instance, not as routine iteration.
+  return durableObjectStub(env.CLAUDE_BRIDGE, "primary-weur-keyless1", { locationHint: "weur" });
 }
 
 // Auth model A: cache the container's claude.ai cookies (incl. cf_clearance +
@@ -157,13 +157,6 @@ function mergeCookies(browser: string | null, container: string): string {
   return Array.from(out, ([k, v]) => `${k}=${v}`).join("; ");
 }
 
-function js(body: string): Response {
-  return new Response(body, { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store, no-cache, must-revalidate" } });
-}
-function html(body: string): Response {
-  return new Response(body, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store, no-cache, must-revalidate" } });
-}
-
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     // 0. AUTH GATE — verify Cloudflare Access identity before ANY routing,
@@ -180,8 +173,8 @@ export default {
     }
 
     // 2. generated bridge assets
-    if (url.pathname === "/__bridge/bridge-client.js") return js(BRIDGE_CLIENT_JS);
-    if (url.pathname === "/__bridge/mainView.js") return js(MAINVIEW_JS);
+    if (url.pathname === "/__bridge/bridge-client.js") return jsResponse(BRIDGE_CLIENT_JS);
+    if (url.pathname === "/__bridge/mainView.js") return jsResponse(MAINVIEW_JS);
     // boot args (real --desktop-* the main passed to the SPA view) from container
     if (url.pathname === "/__bridge/boot") {
       const u = new URL(request.url); u.pathname = "/boot"; u.search = "";
@@ -225,7 +218,7 @@ export default {
     }
 
     // 7. SPA navigation → our injected index.html (real renderer + bridge-client)
-    return html(INDEX_HTML);
+    return htmlResponse(INDEX_HTML);
   },
 };
 

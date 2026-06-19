@@ -43,17 +43,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ripgrep \
 
 # The codex CLI (rust). The Codex desktop app spawns `codex` as its "app-server"
 # (the app.asar references bin/codex / app-server / codex-cli), so it must be on
-# PATH. Installed via npm so the version is pinnable; non-fatal if it fails so the
-# rest of the image still builds (the app boot can be diagnosed independently).
+# PATH. Installed via npm so the version is pinnable; the build fails if the CLI
+# is unavailable because Codex cannot run without it.
 RUN npm install -g @openai/codex@latest 2>&1 | tail -5 \
-  && (codex --version || echo "[codex-cli] not runnable yet — verify at boot") \
-  || echo "[codex-cli] INSTALL FAILED (will diagnose at boot)"
+  && codex --version
 
 WORKDIR /opt/codex-rehost
 
 COPY payload/linux-rehost/package.json ./package.json
 COPY payload/linux-rehost/ ./
-COPY scripts/install-electron-linux.sh /opt/cloudflare/install-electron-linux.sh
+COPY .runtime/install-electron-linux.sh /opt/cloudflare/install-electron-linux.sh
 
 RUN chmod +x /opt/cloudflare/install-electron-linux.sh \
   && npm install --omit=optional \
@@ -108,10 +107,10 @@ RUN apt-get update \
 # invalidate the npm/electron/native-rebuild layers above.
 COPY scripts/entrypoint.sh /opt/cloudflare/entrypoint.sh
 COPY scripts/xstartup.sh /opt/cloudflare/xstartup.sh
-COPY scripts/health-server.mjs /opt/cloudflare/health-server.mjs
+COPY .runtime/health-server.mjs /opt/cloudflare/health-server.mjs
 COPY scripts/login-callback-proxy.mjs /opt/cloudflare/login-callback-proxy.mjs
-COPY scripts/mount-workspace.sh /opt/cloudflare/mount-workspace.sh
-COPY scripts/creds-sync.sh /opt/cloudflare/creds-sync.sh
+COPY .runtime/mount-workspace.sh /opt/cloudflare/mount-workspace.sh
+COPY .runtime/creds-sync.sh /opt/cloudflare/creds-sync.sh
 RUN chmod +x /opt/cloudflare/entrypoint.sh /opt/cloudflare/xstartup.sh /opt/cloudflare/mount-workspace.sh /opt/cloudflare/creds-sync.sh
 
 # Bridge server last — iterating on it must not invalidate the npm/electron layer.
@@ -146,8 +145,6 @@ ENV HEALTH_PORT=8080
 ENV REHOST_ROOT=/opt/codex-rehost
 ENV REHOST_LOG=/tmp/codex-rehost/electron.log
 ENV REHOST_PID=/tmp/codex-rehost/electron.pid
-# Boot mode: "direct" launches `electron .` (bootstrap.cjs → Codex main) to verify
-# the headless boot. "bridge" launches the WS relay (Codex bridge — WIP).
 ENV CODEX_BOOT_MODE=bridge
 ENV BRIDGE_PORT=8787
 ENV BRIDGE_APP_HOST=chatgpt.com

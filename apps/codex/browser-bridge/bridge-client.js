@@ -169,16 +169,7 @@
   // object, the build flavor string, the theme), NOT a {error,result} envelope.
   function sendSync(channel) {
     if (syncSnapshot && Object.prototype.hasOwnProperty.call(syncSnapshot, channel)) return syncSnapshot[channel];
-    warnOnce(warned, channel, "sendSync value missing for " + channel + " (using fallback)");
-    return syncFallback(channel);
-  }
-  function syncFallback(channel) {
-    if (/get-uses-owl-app-shell$/.test(channel)) return false;
-    if (/get-system-theme-variant$/.test(channel)) return "light";
-    if (/get-build-flavor$/.test(channel)) return "prod";
-    if (/get-shared-object-snapshot$/.test(channel)) return {};
-    if (/get-sentry-init-options$/.test(channel)) return {};
-    return null;
+    throw new Error("bridge boot snapshot missing sendSync value for " + channel);
   }
 
   // postMessage: used by the preload for `connect-app-host` — it transfers a
@@ -238,8 +229,7 @@
 
   function requireShim(spec) {
     if (spec === "electron" || spec === "electron/renderer" || spec === "electron/common") return electronShim;
-    warnOnce(warned, "require:" + spec, "preload required unexpected module: " + spec + " (returning {})");
-    return {};
+    throw new Error("preload required unexpected module: " + spec);
   }
 
   // ── sync boot snapshot (the 5 sendSync channels) ───────────────────────────
@@ -255,8 +245,12 @@
           syncSnapshot = boot.sync;
           log("boot sync snapshot:", Object.keys(syncSnapshot).length, "channels");
         }
-      } else warnOnce(warned, "boot", "boot fetch status " + xhr.status + " (sendSync fallbacks in use)");
-    } catch (e) { warnOnce(warned, "boot", "boot fetch failed: " + (e && e.message)); }
+      } else {
+        throw new Error("boot fetch status " + xhr.status);
+      }
+    } catch (e) {
+      throw new Error("bridge boot fetch failed: " + (e && e.message ? e.message : e));
+    }
   }
 
   // The preload references bare `process` (Electron injects it in a real

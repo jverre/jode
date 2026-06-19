@@ -47,10 +47,9 @@ log "app package version=${APP_PKG_VERSION}"
 phase "entrypoint:environment" "versions recorded"
 
 # Mount the SHARED jode filesystem (one R2 bucket, FUSE) at /workspace BEFORE
-# anything launches — all tools (claude-code, opencode, codex) see the same live
-# files. No-op (local ephemeral dir) when R2 creds are absent.
+# anything launches. This must succeed.
 phase "entrypoint:workspace:mount" "mounting shared R2 filesystem"
-MOUNT_LOG_DIR=/tmp/codex-rehost /opt/cloudflare/mount-workspace.sh || true
+MOUNT_LOG_DIR=/tmp/codex-rehost /opt/cloudflare/mount-workspace.sh
 phase "entrypoint:workspace:done" "mount-workspace finished"
 
 # Restore persisted auth (~/.codex) from the shared workspace (R2) so a still-valid
@@ -101,6 +100,11 @@ phase "entrypoint:kasm-auth" "credentials prepared for ${KASMVNC_USER}"
 
 log "starting health server"
 phase "entrypoint:health-server:start" "launching health server"
+JODE_REHOST_TMP=/tmp/codex-rehost \
+JODE_HEALTH_PROCESS_PATTERN="electron|xstartup|kasm|vnc|health-server|node" \
+JODE_HEALTH_PIDS="kasmvnc:kasmvnc.pid" \
+JODE_HEALTH_LOGS="kasmvnc:kasmvnc.log,kasmUserSetup:kasm-user.log" \
+JODE_HEALTH_FILE_CHECKS="appMain:app/.vite/build/bootstrap.js,rendererIndex:app/webview/index.html" \
 node /opt/cloudflare/health-server.mjs >/tmp/codex-rehost/health-server.log 2>&1 &
 HEALTH_PID=$!
 echo "${HEALTH_PID}" >/tmp/codex-rehost/health-server.pid

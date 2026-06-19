@@ -12,7 +12,7 @@ routes = [
 ]
 
 # Cloudflare Access gate config (non-secret). The Worker verifies the Access JWT
-# against these on every request — see @jode/auth + apps/codex/README.md.
+# against these on every request — see @jode/edge + apps/codex/README.md.
 # Set these to your team domain, the Access application's AUD tag, and the single
 # allowed email. (No bridge key: the DO binding is private + Access-gated, so the
 # in-container bridge accepts the WS directly — matches @jode/claude-code.)

@@ -1,7 +1,6 @@
 // Shared Tailwind theme for the jode shell (shadcn/ui zinc + the extra
-// --sidebar token). Consumed as a `preset` by both the desktop renderer and the
-// web app so the rail/chrome render identically. Each consumer sets its own
-// `content` globs (and MUST include this package's src so classes aren't purged):
+// --sidebar token). Each consumer sets its own `content` globs and MUST include
+// this package's src so classes aren't purged:
 //
 //   const shell = require('@jode/shell/tailwind.preset.cjs')
 //   module.exports = {

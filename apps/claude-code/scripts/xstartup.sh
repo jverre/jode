@@ -56,7 +56,7 @@ trap 'EXIT_CODE=$?; echo "${EXIT_CODE}" > /tmp/claude-rehost/electron.exit; phas
 # --js-flags=--jitless is OFF by default: Cloudflare's firecracker runtime
 # supports JIT, and jitless cripples renderer JS (every keystroke re-renders
 # React interpreted) which dominates typing latency. Set CLAUDE_REHOST_JITLESS=1
-# to re-enable as a fallback if CF boot regresses.
+# only for explicit runtime diagnostics.
 JS_FLAGS=""
 if [ "${CLAUDE_REHOST_JITLESS:-0}" = "1" ]; then
   JS_FLAGS="--js-flags=--jitless"

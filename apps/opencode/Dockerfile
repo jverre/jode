@@ -28,8 +28,8 @@ RUN opencode --version
 WORKDIR /workspace
 
 COPY scripts/entrypoint.sh /opt/jode/entrypoint.sh
-COPY scripts/mount-workspace.sh /opt/jode/mount-workspace.sh
-COPY scripts/creds-sync.sh /opt/jode/creds-sync.sh
+COPY .runtime/mount-workspace.sh /opt/jode/mount-workspace.sh
+COPY .runtime/creds-sync.sh /opt/jode/creds-sync.sh
 RUN chmod +x /opt/jode/entrypoint.sh /opt/jode/mount-workspace.sh /opt/jode/creds-sync.sh
 
 # Auth persistence (creds-sync.sh): snapshot opencode's credential dir to the

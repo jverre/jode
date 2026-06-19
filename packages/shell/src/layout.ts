@@ -17,7 +17,7 @@ export const TITLEBAR_HEIGHT = 32
 export const MARGIN = 12
 /** Width of the frame border the pane is inset within. Both pane hosts inset by
  *  this so the frame's border shows as a ring: the desktop native view via
- *  ViewManager.setBounds, the web <iframe> via the shell's pane slot. */
+ *  ViewManager.setBounds. */
 export const BORDER = 1
 // Pane corners are square so the active tab merges into a straight left edge
 // (a rounded corner here would create a notch where the tab joins).

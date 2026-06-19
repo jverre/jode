@@ -1,49 +1,63 @@
 # jode
 
-**One home for every AI coding agent — running in the cloud, editable on your laptop.**
+One workspace for Claude Code, Codex, and OpenCode running in Cloudflare containers.
 
-jode is a desktop app that brings Claude Code, Codex, and OpenCode together in a single window, and runs them on a remote machine you never have to manage. Your files stay live on your laptop the whole time, so you edit in the editor you already love while the agents work in a sandbox that's always on, always fast, and never drains your battery.
+Jode gives each agent its own hosted URL behind Cloudflare Access. The browser starts at `jode.jacquesverre.com` and picks an agent. The desktop app opens the same hosted agents in native panes. All agent containers mount one persisted `/workspace` from R2 through `tigrisfs`.
 
----
+## Why
 
-## Why jode
+Using multiple coding agents today usually means separate apps, terminals, sessions, and local setup. Jode turns them into one cloud-backed workspace:
 
-AI coding agents have changed how we build software. But using more than one of them today means a mess of terminal tabs, separate windows, and machine-specific setup. And running them locally means your laptop fans spin up, your battery dies, and walking away from your desk means walking away from your work.
+- one desktop rail for Claude Code, Codex, and OpenCode
+- one Cloudflare Access login for every agent
+- one shared `/workspace` that persists across container restarts
+- agents run remotely, so long tasks do not depend on your laptop
+- browser access starts from one simple product selector
 
-jode fixes all three.
+## Architecture
 
-### 🪟 Every agent, one window
-Switch between Claude Code, Codex, and OpenCode the way you switch Slack workspaces — one click, no context-switching, no hunting for the right terminal. Each agent keeps its own session, its own state, and its own place. Your whole AI toolbelt lives behind a single icon in your dock.
+```text
+Browser
+   |
+   v
+jode.jacquesverre.com
+Product Selector Worker
+   |
+   +--> claude.jode.jacquesverre.com   -> Claude Worker   -> DO -> Container -> /workspace
+   +--> codex.jode.jacquesverre.com    -> Codex Worker    -> DO -> Container -> /workspace
+   +--> opencode.jode.jacquesverre.com -> OpenCode Worker -> DO -> Container -> /workspace
 
-### ☁️ The work runs in the cloud, the files live on your laptop
-The agents run on a remote machine, so the heavy lifting — installs, builds, long-running tasks — never touches your hardware. But your project files are continuously synced to your local disk, so you can open them in VS Code, Vim, or anything else and edit them exactly as if they were local. Change a file on your laptop, the agent sees it instantly. The agent changes a file remotely, it lands on your laptop instantly. No "push to see your changes," no stale copies, no merge headaches.
+Desktop app
+native rail
+   |
+   +--> same three hosted agent URLs
 
-### 🔒 Private by default
-Your remote environment sits behind Cloudflare Zero Trust and is locked to your identity alone. No shared servers, no open ports, no credentials sitting on a box somewhere. Only you can reach your machine, and you reach it the moment you open the app.
+/workspace = one R2 bucket mounted in every container with tigrisfs
+```
 
-### 🔋 Close the lid, keep the work
-Because the agents don't run on your laptop, you can shut it, move to another room, or switch machines entirely — the work keeps going. Reopen jode anywhere and you're right back where you left off.
+## Commands
 
----
+```bash
+npm run dev              # deploy selector + hosted agents, then launch desktop
+JODE_SKIP_DEPLOY=1 npm run dev
+npm run dry-run          # validate selector + hosted agents
+npm run deploy           # deploy selector + hosted agents
+npm run build            # build desktop app
+```
 
-## What you get
+## Repo
 
-- **A unified desktop app** with a fast workspace switcher for all your AI coding agents
-- **Real two-way file sync** between your laptop and your remote environment — edit locally, run remotely
-- **A managed remote dev box** on Cloudflare with nothing to provision or maintain
-- **Single-identity Zero Trust access** so your environment is reachable only by you
-- **Always-on sessions** that survive closing your laptop, switching networks, or changing machines
+```text
+apps/desktop       Electron shell
+apps/selector      Root product selector Worker
+apps/claude-code   Claude Code Worker + container
+apps/codex         Codex Worker + container
+apps/opencode      OpenCode Worker + container
+packages/edge      shared Worker auth/runtime helpers
+packages/agents    shared agent registry
+packages/container-runtime
+                   shared container scripts
+packages/shell     shared desktop shell UI
+```
 
----
-
-## Who it's for
-
-Developers who live in AI coding agents and want them to feel like one tool instead of five. People who want the power of a beefy remote machine without giving up their local editor. Anyone tired of choosing between "fast and local but draining my laptop" and "remote but I can't touch my files."
-
----
-
-## Status
-
-jode is in active early development. The pieces — a hosted agent running on Cloudflare and a local↔remote file sync layer — have been prototyped and proven out. We're now assembling them into the product described above.
-
-See [`plans/june-2026/`](./plans/june-2026/) for the current implementation plan.
+See [docs/architecture.md](./docs/architecture.md) for production invariants and boundaries.

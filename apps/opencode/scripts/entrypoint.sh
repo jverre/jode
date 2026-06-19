@@ -7,8 +7,8 @@
 #   serve     → `opencode serve` on :4096 (UI + API + WebSocket, all one origin)
 #   shutdown  → unmount so tigrisfs flushes its write-back cache
 #
-# The mount is live — no snapshots, no checkpoint loops. If R2 creds are absent
-# /workspace is a plain local dir and the server still runs (ephemeral).
+# The mount is live — no snapshots, no checkpoint loops. The container fails if
+# the mount cannot start.
 # ─────────────────────────────────────────────────────────────────────────────
 set -uo pipefail
 
@@ -18,7 +18,7 @@ WORKSPACE=/workspace
 PORT="${OPENCODE_PORT:-4096}"
 mkdir -p "$WORKSPACE"
 
-/opt/jode/mount-workspace.sh || true
+/opt/jode/mount-workspace.sh
 
 # Restore persisted opencode auth (~/.local/share/opencode) from the shared
 # workspace (R2) so credentials survive container recycling instead of forcing a

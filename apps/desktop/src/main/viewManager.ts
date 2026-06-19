@@ -1,6 +1,5 @@
 import { BrowserWindow, WebContentsView, session } from 'electron'
 import type { AgentDef } from './agents'
-import { placeholderDataUrl } from './placeholder'
 import { preferDetachedDevTools } from './devtools'
 
 // NOTE: these MUST match src/renderer/src/layout.ts.
@@ -143,12 +142,11 @@ export class ViewManager {
     // place. Route those into a child window that shares this agent's partition,
     // so the Access cookie it sets is visible to the main view on completion.
     wc.setWindowOpenHandler(({ url }) => {
-      if (agent.url) this.openAuthPopup(agent, url)
+      this.openAuthPopup(agent, url)
       return { action: 'deny' }
     })
 
-    // Real hosted UI when a Worker URL is configured; placeholder until then.
-    void wc.loadURL(agent.url ?? placeholderDataUrl(agent))
+    void wc.loadURL(agent.url)
 
     this.win.contentView.addChildView(view)
     view.setVisible(false)
@@ -178,13 +176,7 @@ export class ViewManager {
 
   /** Open an OAuth/Access popup in a child window sharing the agent partition. */
   private openAuthPopup(agent: AgentDef, url: string): void {
-    const appOrigin = (() => {
-      try {
-        return new URL(agent.url as string).origin
-      } catch {
-        return null
-      }
-    })()
+    const appOrigin = new URL(agent.url).origin
     const popup = new BrowserWindow({
       width: 480,
       height: 660,

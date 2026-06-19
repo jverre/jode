@@ -4,7 +4,6 @@
 // referenced by the desktop app for login state. This replaces the prototype's
 // hardcoded `split-bridge-key-v1` shared key: identity now comes from a verified
 // Cloudflare Access JWT, gating every request including the /bridge WS upgrade.
-// See plans/june-2026/02-cloudflare-claude-code.md (build order step 2).
 //
 // Runs in the Workers runtime — uses WebCrypto (`crypto.subtle`) and `fetch`,
 // no Node APIs.

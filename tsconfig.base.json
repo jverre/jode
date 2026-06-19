@@ -11,10 +11,9 @@
     "declaration": true,
     "baseUrl": ".",
     "paths": {
-      "@jode/protocol": ["packages/protocol/src/index.ts"],
-      "@jode/sync": ["packages/sync/src/index.ts"],
       "@jode/agents": ["packages/agents/src/index.ts"],
       "@jode/auth": ["packages/auth/src/index.ts"],
+      "@jode/edge": ["packages/edge/src/index.ts"],
       "@jode/shell": ["packages/shell/src/index.ts"]
     }
   }

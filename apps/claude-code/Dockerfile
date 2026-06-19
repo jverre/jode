@@ -1,10 +1,8 @@
 # Full (non-slim) bookworm: it ships `ca-certificates` already configured by the
-# image publisher (built on real amd64). The slim base does not, so our build had
-# to install it — and its postinst's openssl rehash SIGILLs ("Illegal
-# instruction") when this image is built under emulated linux/amd64 on an arm64
-# host (local `wrangler dev`). Using the full base means we never reconfigure
-# ca-certificates, sidestepping that crash while still building cleanly on
-# Cloudflare's native amd64 builders.
+# image publisher (built on real amd64). The slim base does not, so installing
+# it during an emulated linux/amd64 build can trip openssl rehash SIGILLs. Using
+# the full base means we never reconfigure ca-certificates, sidestepping that
+# crash while still building cleanly on Cloudflare's native amd64 builders.
 FROM --platform=linux/amd64 node:24-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -53,8 +51,8 @@ WORKDIR /opt/claude-rehost
 COPY payload/linux-rehost/package.json ./package.json
 COPY payload/linux-rehost/ ./
 COPY scripts/entrypoint.sh /opt/cloudflare/entrypoint.sh
-COPY scripts/health-server.mjs /opt/cloudflare/health-server.mjs
-COPY scripts/install-electron-linux.sh /opt/cloudflare/install-electron-linux.sh
+COPY .runtime/health-server.mjs /opt/cloudflare/health-server.mjs
+COPY .runtime/install-electron-linux.sh /opt/cloudflare/install-electron-linux.sh
 COPY scripts/xstartup.sh /opt/cloudflare/xstartup.sh
 
 RUN chmod +x /opt/cloudflare/entrypoint.sh /opt/cloudflare/install-electron-linux.sh /opt/cloudflare/xstartup.sh \
@@ -99,7 +97,7 @@ RUN apt-get update \
   && rm -f /tmp/tigrisfs.deb \
   && apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
   && tigrisfs --version
-COPY scripts/mount-workspace.sh /opt/cloudflare/mount-workspace.sh
+COPY .runtime/mount-workspace.sh /opt/cloudflare/mount-workspace.sh
 RUN chmod +x /opt/cloudflare/mount-workspace.sh
 
 # Bridge server last — iterating on it must not invalidate the npm/electron layer.
