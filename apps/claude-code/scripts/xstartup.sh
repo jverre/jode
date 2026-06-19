@@ -67,24 +67,13 @@ fi
 # reads as sluggish typing/echo. Keep the renderer at full speed.
 ANTI_THROTTLE_FLAGS="--disable-renderer-backgrounding --disable-backgrounding-occluded-windows --disable-background-timer-throttling"
 
-# Pin Electron's profile (userData) to a FIXED, known path so creds-sync.sh can
-# snapshot/restore it across container reboots — the claude.ai session lives in
-# this profile's session.defaultSession cookie store (see bridge.cjs). Electron
-# honors the --user-data-dir Chromium switch regardless of the main script.
-# On restore the stale, IP-bound cf_clearance is harmless: bridge.cjs re-clears
-# Turnstile from the new container IP on boot and overwrites it, while the durable
-# claude.ai/claude.com session cookie persists → already logged in.
-PROFILE_DIR="${CLAUDE_PROFILE_DIR:-/root/.jode-profile}"
-mkdir -p "${PROFILE_DIR}"
-PROFILE_FLAG="--user-data-dir=${PROFILE_DIR}"
-
-log "electron flags: ${PROFILE_FLAG} --no-sandbox --disable-dev-shm-usage --disable-gpu ${ANTI_THROTTLE_FLAGS} ${JS_FLAGS:-<jit-enabled>}"
+log "electron flags: --no-sandbox --disable-dev-shm-usage --disable-gpu ${ANTI_THROTTLE_FLAGS} ${JS_FLAGS:-<jit-enabled>}"
 log "bridge entry: /opt/bridge/bridge.cjs (UI/server split — exposes eipc handlers over WS on :${BRIDGE_PORT:-8787})"
 # UI/server split: run the bridge server (real Electron main headless under the
 # Xvfb display) instead of a VNC-rendered app. bridge.cjs requires
 # bootstrap.cjs from REHOST_ROOT and hosts HTTP /healthz + WS /bridge on 8787.
 # shellcheck disable=SC2086
-./node_modules/.bin/electron /opt/bridge/bridge.cjs "${PROFILE_FLAG}" --no-sandbox --disable-dev-shm-usage --disable-gpu ${ANTI_THROTTLE_FLAGS} ${JS_FLAGS} >"${REHOST_LOG}" 2>&1 &
+./node_modules/.bin/electron /opt/bridge/bridge.cjs --no-sandbox --disable-dev-shm-usage --disable-gpu ${ANTI_THROTTLE_FLAGS} ${JS_FLAGS} >"${REHOST_LOG}" 2>&1 &
 ELECTRON_PID=$!
 echo "${ELECTRON_PID}" > "${REHOST_PID}"
 phase "xstartup:electron-spawned" "pid=${ELECTRON_PID}"

@@ -53,19 +53,6 @@ phase "entrypoint:workspace:mount" "mounting shared R2 filesystem"
 MOUNT_LOG_DIR=/tmp/claude-rehost /opt/cloudflare/mount-workspace.sh || true
 phase "entrypoint:workspace:done" "mount-workspace finished"
 
-# Restore the persisted Electron profile (the claude.ai session cookies live in
-# its session.defaultSession — see bridge.cjs) from the shared workspace (R2) so
-# a still-valid login is reused instead of forcing re-auth every boot. MUST run
-# before xstartup launches Electron with --user-data-dir on the same path.
-# Best-effort: a missing/corrupt snapshot must never block boot. A background
-# watcher keeps it fresh; cleanup() takes a final snapshot on shutdown.
-phase "entrypoint:creds:restore" "restoring persisted credentials"
-/opt/cloudflare/creds-sync.sh restore || true
-/opt/cloudflare/creds-sync.sh watch >/tmp/claude-rehost/creds-sync.log 2>&1 &
-CREDS_PID=$!
-echo "${CREDS_PID}" >/tmp/claude-rehost/creds-sync.pid
-phase "entrypoint:creds:watch" "pid=${CREDS_PID}"
-
 log "starting health server"
 phase "entrypoint:health-server:start" "launching health server"
 node /opt/cloudflare/health-server.mjs >/tmp/claude-rehost/health-server.log 2>&1 &
@@ -107,11 +94,7 @@ phase "entrypoint:bridge:spawned" "pid=${BRIDGE_PID}"
 
 cleanup() {
   phase "entrypoint:cleanup" "stopping child processes"
-  # Final credential snapshot WHILE the mount is still up, then stop the watcher.
-  /opt/cloudflare/creds-sync.sh save || true
-  kill "${HEALTH_PID}" "${XVFB_PID}" "${BRIDGE_PID}" "${CREDS_PID:-}" 2>/dev/null || true
-  # Unmount the shared filesystem so tigrisfs flushes the snapshot we just wrote.
-  fusermount -u /workspace 2>/dev/null || umount /workspace 2>/dev/null || true
+  kill "${HEALTH_PID}" "${XVFB_PID}" "${BRIDGE_PID}" 2>/dev/null || true
 }
 
 trap cleanup EXIT INT TERM

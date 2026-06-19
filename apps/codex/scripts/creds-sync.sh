@@ -18,7 +18,7 @@
 #   single .tgz OBJECT per path under /workspace/.jode-auth/<AGENT>/. One object
 #   per path → no many-tiny-files / DB-on-FUSE corruption.
 #
-# Identical copies live in apps/{claude-code,codex,opencode}/scripts/ — keep in sync.
+# Identical copies live in apps/{codex,opencode}/scripts/ — keep in sync.
 #
 # ENV:
 #   AGENT               required — subdir under /workspace/.jode-auth/
