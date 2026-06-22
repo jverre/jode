@@ -4,9 +4,8 @@
 // Unlike the Claude Code app, OpenCode ships a real headless server (`opencode
 // serve`) that serves its OWN web UI, JSON API, and terminal WebSocket on a
 // single port (4096), with the production UI auto-connecting to `location.origin`.
-// So this Worker is a *pure authenticated reverse proxy*: no SPA injection, no
-// payload, no bridge — verify the Cloudflare Access identity, then forward every
-// request (HTTP + WS) to the container running `opencode serve`.
+// This Worker stays a tiny authenticated reverse proxy; it only patches the root
+// HTML to make /workspace the default project for Jode's shared cloud filesystem.
 //
 //   • EVERY request   → Cloudflare Access JWT verified (@jode/edge), incl. WS upgrade
 //   • all paths       → reverse-proxy to the container on :4096 (UI + API + WS)
@@ -22,6 +21,8 @@ import {
 } from "@jode/edge";
 
 const OPENCODE_PORT = 4096;
+const WORKSPACE = "/workspace";
+const WORKSPACE_DEEP_LINK = `opencode://open-project?directory=${WORKSPACE}`;
 
 type Env = AccessEnv & WorkspaceMountEnv & {
   OPENCODE: DurableObjectNamespace;
@@ -54,7 +55,8 @@ export class OpencodeContainer extends Container {
 
     await this.startAndWaitForPorts();
     // Forward HTTP and WebSocket upgrades straight through to opencode serve.
-    return this.containerFetch(request, OPENCODE_PORT);
+    const response = await this.containerFetch(request, OPENCODE_PORT);
+    return withWorkspaceBootstrap(request, response);
   }
 }
 
@@ -70,3 +72,30 @@ export default {
     return stub.fetch(request);
   },
 } satisfies ExportedHandler<Env>;
+
+async function withWorkspaceBootstrap(request: Request, response: Response): Promise<Response> {
+  if (request.method !== "GET") return response;
+  if (!isHtmlResponse(response)) return response;
+
+  const html = await response.text();
+  const script = `
+    <script>
+      (() => {
+        if (location.pathname !== "/") return;
+        const url = ${JSON.stringify(WORKSPACE_DEEP_LINK)};
+        window.__OPENCODE__ = window.__OPENCODE__ || {};
+        window.__OPENCODE__.deepLinks = window.__OPENCODE__.deepLinks || [];
+        if (!window.__OPENCODE__.deepLinks.includes(url)) window.__OPENCODE__.deepLinks.push(url);
+      })();
+    </script>`;
+  const body = html.includes("</head>") ? html.replace("</head>", `${script}\n  </head>`) : `${script}\n${html}`;
+  const headers = new Headers(response.headers);
+  headers.delete("content-length");
+  headers.set("cache-control", "no-store, no-cache, must-revalidate");
+  return new Response(body, { status: response.status, statusText: response.statusText, headers });
+}
+
+function isHtmlResponse(response: Response): boolean {
+  const contentType = response.headers.get("content-type") ?? "";
+  return response.status === 200 && contentType.toLowerCase().includes("text/html");
+}

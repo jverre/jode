@@ -19,6 +19,7 @@ PORT="${OPENCODE_PORT:-4096}"
 mkdir -p "$WORKSPACE"
 
 /opt/jode/mount-workspace.sh
+cd "$WORKSPACE"
 
 # Restore persisted opencode auth (~/.local/share/opencode) from the shared
 # workspace (R2) so credentials survive container recycling instead of forcing a

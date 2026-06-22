@@ -164,11 +164,11 @@ export class ViewManager {
     view.setBorderRadius(PANE_RADIUS)
 
     const wc = view.webContents
-    // Force the genuine Claude Desktop UA so the hosted SPA renders the desktop
-    // app, not the web "Download Desktop app" page (see CLAUDE_DESKTOP_UA). Set
-    // on the webContents so it applies to every navigation in this view,
-    // including the Cloudflare Access login chain.
-    wc.setUserAgent(CLAUDE_DESKTOP_UA)
+    // Force the genuine Claude Desktop UA only for Claude Code so the hosted SPA
+    // renders the desktop app, not the web "Download Desktop app" page (see
+    // CLAUDE_DESKTOP_UA). Other agents should keep their normal UA; OpenCode in
+    // particular should not see Claude/Electron desktop tokens.
+    if (agent.id === 'claude-code') wc.setUserAgent(CLAUDE_DESKTOP_UA)
     // Inspecting an agent pane: keep its DevTools detached so they don't end up
     // hidden behind this native view.
     preferDetachedDevTools(wc)
@@ -181,6 +181,14 @@ export class ViewManager {
     wc.on('did-finish-load', () =>
       this.emit(agent.id, isAccessLoginUrl(wc.getURL()) ? 'login' : 'ready')
     )
+    if (agent.id === 'opencode') {
+      wc.on('dom-ready', () => {
+        void this.installOpenCodePaneFixes(wc)
+      })
+      wc.on('did-finish-load', () => {
+        void this.installOpenCodePaneFixes(wc)
+      })
+    }
     // -3 (ERR_ABORTED) is the normal signal for an Access redirect superseding an
     // in-flight load — not an error.
     wc.on('did-fail-load', (_e, code) => {
@@ -247,6 +255,37 @@ export class ViewManager {
       if (appOrigin && navUrl.startsWith(appOrigin)) popup.close()
     })
     popup.on('closed', () => this.views.get(agent.id)?.webContents.reload())
+  }
+
+  private async installOpenCodePaneFixes(wc: Electron.WebContents): Promise<void> {
+    if (wc.isDestroyed()) return
+
+    // OpenCode's web UI contains Tauri desktop drag-region CSS. In Jode the
+    // outer Electron shell owns the draggable titlebar, so these inner regions
+    // are unnecessary and can intercept clicks inside the WebContentsView.
+    await wc.insertCSS(`
+      [data-tauri-drag-region],
+      [data-tauri-drag-region] * {
+        -webkit-app-region: no-drag !important;
+        app-region: no-drag !important;
+      }
+    `)
+
+    // When the pane is opened at the home route, take the user straight to the
+    // shared cloud workspace. OpenCode already supports this deep-link event.
+    await wc.executeJavaScript(
+      `
+        (() => {
+          if (location.pathname !== "/") return;
+          const url = "opencode://open-project?directory=/workspace";
+          window.__OPENCODE__ = window.__OPENCODE__ || {};
+          window.__OPENCODE__.deepLinks = window.__OPENCODE__.deepLinks || [];
+          if (!window.__OPENCODE__.deepLinks.includes(url)) window.__OPENCODE__.deepLinks.push(url);
+          window.dispatchEvent(new CustomEvent("opencode:deep-link", { detail: { urls: [url] } }));
+        })();
+      `,
+      true
+    )
   }
 
   private layout(): void {
