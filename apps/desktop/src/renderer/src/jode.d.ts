@@ -18,9 +18,11 @@ declare global {
     jode: {
       listAgents(): Promise<AgentInfo[]>
       switchAgent(id: string): Promise<void>
+      signIn(): Promise<void>
       reloadAgent(id: string): Promise<void>
       signOutAgent(id: string): Promise<void>
       onAgentState(cb: (state: AgentState) => void): () => void
+      onAuthState(cb: (status: 'signedOut' | 'signingIn' | 'signedIn') => void): () => void
     }
   }
 }

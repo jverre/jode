@@ -6,6 +6,8 @@
 
 export type AgentId = "claude-code" | "codex" | "opencode";
 
+export const JODE_URL = "https://jode.jacquesverre.com";
+
 export interface AgentDef {
   /** Stable id; also used as the persistent session partition key. */
   id: AgentId;

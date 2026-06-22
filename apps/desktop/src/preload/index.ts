@@ -15,10 +15,13 @@ export interface AgentState {
   status: 'idle' | 'loading' | 'ready' | 'login' | 'error'
 }
 
+export type AuthStatus = 'signedOut' | 'signingIn' | 'signedIn'
+
 // The only surface the renderer can touch. No Node, no direct ipcRenderer.
 const api = {
   listAgents: (): Promise<AgentInfo[]> => ipcRenderer.invoke('agents:list'),
   switchAgent: (id: string): Promise<void> => ipcRenderer.invoke('agents:switch', id),
+  signIn: (): Promise<void> => ipcRenderer.invoke('auth:signIn'),
   /** Reload an agent's web view (reconnect). */
   reloadAgent: (id: string): Promise<void> => ipcRenderer.invoke('agents:reload', id),
   /** Sign out: clear the agent's Access cookies and return to the login page. */
@@ -28,6 +31,12 @@ const api = {
     const listener = (_e: unknown, state: AgentState) => cb(state)
     ipcRenderer.on('agent:state', listener)
     return () => ipcRenderer.removeListener('agent:state', listener)
+  },
+  /** Subscribe to app-level auth-state changes. Returns an unsubscribe fn. */
+  onAuthState: (cb: (status: AuthStatus) => void): (() => void) => {
+    const listener = (_e: unknown, status: AuthStatus) => cb(status)
+    ipcRenderer.on('auth:state', listener)
+    return () => ipcRenderer.removeListener('auth:state', listener)
   }
 }
 

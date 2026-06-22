@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'node:path'
+import { JODE_URL } from '@jode/agents'
 import { AGENTS, agentInfo } from './agents'
 import { ViewManager, TITLEBAR_HEIGHT } from './viewManager'
 import { preferDetachedDevTools } from './devtools'
@@ -57,6 +58,9 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   ipcMain.handle('agents:list', () => AGENTS.map(agentInfo))
+  ipcMain.handle('auth:signIn', () => {
+    views?.signIn(JODE_URL)
+  })
   ipcMain.handle('agents:switch', (_event, id: string) => {
     views?.switch(id)
   })

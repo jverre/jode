@@ -33,6 +33,7 @@ const CLAUDE_DESKTOP_UA =
   'Claude/1.10628.0 Chrome/146.0.7680.216 Electron/41.6.1 Safari/537.36'
 
 type AgentStatus = 'idle' | 'loading' | 'ready' | 'login' | 'error'
+type AuthStatus = 'signedOut' | 'signingIn' | 'signedIn'
 
 /**
  * ONE shared persistent session partition for every agent pane.
@@ -80,6 +81,8 @@ function isAccessLoginUrl(rawUrl: string): boolean {
 export class ViewManager {
   private views = new Map<string, WebContentsView>()
   private activeId: string | null = null
+  private authWindow: BrowserWindow | null = null
+  private authCompleted = false
 
   constructor(
     private readonly win: BrowserWindow,
@@ -99,6 +102,52 @@ export class ViewManager {
     this.activeId = id
     for (const [vid, view] of this.views) view.setVisible(vid === id)
     this.layout()
+  }
+
+  /** Start the single app-level Cloudflare Access sign-in flow. */
+  signIn(url: string): void {
+    if (this.authWindow && !this.authWindow.isDestroyed()) {
+      this.authWindow.focus()
+      return
+    }
+
+    this.authCompleted = false
+    this.emitAuth('signingIn')
+
+    const appOrigin = new URL(url).origin
+    const popup = new BrowserWindow({
+      width: 520,
+      height: 700,
+      parent: this.win,
+      title: 'Sign in to Jode',
+      backgroundColor: '#ffffff',
+      webPreferences: {
+        partition: SHARED_PARTITION,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true
+      }
+    })
+
+    this.authWindow = popup
+
+    const completeIfAuthenticated = (navUrl: string): void => {
+      if (sameOrigin(navUrl, appOrigin) && !isAccessLoginUrl(navUrl)) {
+        this.authCompleted = true
+        this.emitAuth('signedIn')
+        popup.close()
+      }
+    }
+
+    popup.webContents.on('did-navigate', (_e, navUrl) => completeIfAuthenticated(navUrl))
+    popup.webContents.on('did-navigate-in-page', (_e, navUrl) => completeIfAuthenticated(navUrl))
+    popup.webContents.on('did-finish-load', () => completeIfAuthenticated(popup.webContents.getURL()))
+    popup.on('closed', () => {
+      if (this.authWindow === popup) this.authWindow = null
+      if (!this.authCompleted) this.emitAuth('signedOut')
+    })
+
+    void popup.loadURL(url)
   }
 
   private create(agent: AgentDef): WebContentsView {
@@ -167,6 +216,8 @@ export class ViewManager {
    */
   async signOut(_id: string): Promise<void> {
     await session.fromPartition(SHARED_PARTITION).clearStorageData({ storages: ['cookies'] })
+    for (const view of this.views.values()) view.setVisible(false)
+    this.emitAuth('signedOut')
     for (const view of this.views.values()) view.webContents.reload()
   }
 
@@ -218,5 +269,18 @@ export class ViewManager {
   private emit(id: string, status: AgentStatus): void {
     if (this.win.isDestroyed()) return
     this.win.webContents.send('agent:state', { id, status })
+  }
+
+  private emitAuth(status: AuthStatus): void {
+    if (this.win.isDestroyed()) return
+    this.win.webContents.send('auth:state', status)
+  }
+}
+
+function sameOrigin(rawUrl: string, expectedOrigin: string): boolean {
+  try {
+    return new URL(rawUrl).origin === expectedOrigin
+  } catch {
+    return false
   }
 }

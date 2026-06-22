@@ -14,6 +14,7 @@ export interface AgentInfo {
 }
 
 export type AgentStatus = 'idle' | 'loading' | 'ready' | 'login' | 'error'
+export type AuthStatus = 'signedOut' | 'signingIn' | 'signedIn'
 
 export interface AgentState {
   id: string
@@ -33,4 +34,8 @@ export interface ShellHost {
   switchAgent(id: string): void | Promise<void>
   /** Subscribe to per-agent load-state changes. Returns an unsubscribe fn. */
   onAgentState(cb: (state: AgentState) => void): () => void
+  /** Start app-level authentication. Hosts without auth can omit this. */
+  signIn?(): void | Promise<void>
+  /** Subscribe to app-level authentication state. Hosts without auth can omit this. */
+  onAuthState?(cb: (status: AuthStatus) => void): () => void
 }

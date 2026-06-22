@@ -9,7 +9,9 @@ import { Shell, type ShellHost } from '@jode/shell'
 const nativeHost: ShellHost = {
   listAgents: () => window.jode.listAgents(),
   switchAgent: (id) => window.jode.switchAgent(id),
-  onAgentState: (cb) => window.jode.onAgentState(cb)
+  onAgentState: (cb) => window.jode.onAgentState(cb),
+  signIn: () => window.jode.signIn(),
+  onAuthState: (cb) => window.jode.onAuthState(cb)
 }
 
 export function App(): JSX.Element {
