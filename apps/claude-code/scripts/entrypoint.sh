@@ -113,13 +113,13 @@ while true; do
     set -e
     phase "entrypoint:bridge:exit" "code=${EXIT_CODE}"
     echo "[entrypoint] bridge exited with code ${EXIT_CODE}" | tee -a /tmp/claude-rehost/xstartup.log
-    # Keep the container alive so logs/diagnostics stay inspectable.
-    sleep infinity
+    if [ "${EXIT_CODE}" -eq 0 ]; then EXIT_CODE=1; fi
+    exit "${EXIT_CODE}"
   fi
   if ! kill -0 "${XVFB_PID}" 2>/dev/null; then
     phase "entrypoint:xvfb:exit" "Xvfb died — Electron lost its display"
     echo "[entrypoint] Xvfb died; bridge will likely fail" | tee -a /tmp/claude-rehost/xvfb.log
-    sleep infinity
+    exit 1
   fi
   phase "entrypoint:heartbeat" "bridge-alive"
   sleep 3600

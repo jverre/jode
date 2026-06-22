@@ -9,6 +9,7 @@
     "predeploy": "node ../../tools/sync-runtime.mjs && node scripts/gen-assets.mjs",
     "deploy": "wrangler deploy",
     "dry-run": "node ../../tools/sync-runtime.mjs && node scripts/gen-assets.mjs && wrangler deploy --dry-run",
+    "tail": "wrangler tail",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

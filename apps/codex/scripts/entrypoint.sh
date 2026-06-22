@@ -155,7 +155,8 @@ while true; do
     set -e
     phase "entrypoint:kasmvnc:exit" "code=${EXIT_CODE}"
     echo "[entrypoint] kasmvnc exited with code ${EXIT_CODE}" | tee -a /tmp/codex-rehost/kasmvnc.log
-    sleep infinity
+    if [ "${EXIT_CODE}" -eq 0 ]; then EXIT_CODE=1; fi
+    exit "${EXIT_CODE}"
   fi
   phase "entrypoint:heartbeat" "kasmvnc-alive"
   sleep 3600

@@ -23,6 +23,7 @@ import {
 import { INDEX_HTML, BRIDGE_CLIENT_JS, MAINVIEW_JS } from "./generated-assets";
 
 const UPSTREAM_ORIGIN = "https://claude.ai";
+const HEALTH_PORT = 8080;
 const BRIDGE_PORT = 8787;
 const PROXY_PATH_PREFIXES = ["/api/", "/edge-api/", "/cdn-cgi/", "/v1/", "/ent_api/", "/account_api/"];
 const LOCAL_ASSET_PREFIXES = ["/assets/", "/audio/", "/favicon.ico", "/i18n/", "/images/", "/manifest.json", "/robots.txt"];
@@ -38,10 +39,12 @@ type Env = AccessEnv & WorkspaceMountEnv & {
 };
 
 export class ClaudeBridgeContainer extends Container {
-  defaultPort = BRIDGE_PORT;
-  requiredPorts = [BRIDGE_PORT];
+  defaultPort = HEALTH_PORT;
+  requiredPorts = [HEALTH_PORT];
   private restored = false;
   private lastCaptureAt = 0;
+  private bridgeReadyUntil = 0;
+  private bridgeWaitPromise: Promise<boolean> | undefined;
 
   override async fetch(request: Request): Promise<Response> {
     // Inject the shared-filesystem mount creds into the container BEFORE it
@@ -55,6 +58,21 @@ export class ClaudeBridgeContainer extends Container {
     };
 
     await this.startAndWaitForPorts();
+    const url = new URL(request.url);
+    if (url.pathname === "/healthz" || url.pathname === "/mount-status") {
+      return this.containerFetch(request, HEALTH_PORT);
+    }
+    if (url.pathname === "/bridge-healthz") {
+      const healthUrl = new URL(request.url);
+      healthUrl.pathname = "/healthz";
+      const ready = await this.waitForBridgePort(2_000);
+      if (!ready) return bridgeUnavailableResponse("bridge port 8787 is not listening");
+      return this.containerFetch(new Request(healthUrl.toString(), request), BRIDGE_PORT);
+    }
+
+    const ready = await this.waitForBridgePort();
+    if (!ready) return bridgeUnavailableResponse("bridge port 8787 is not listening");
+
     // Auth persistence: re-inject the durable login cookies once on a fresh
     // container, then periodically re-snapshot them. Only sessionKey + the org
     // hint are stored — the bridge's /auth-cookies endpoint filters out the
@@ -64,6 +82,36 @@ export class ClaudeBridgeContainer extends Container {
     await this.restoreCookiesOnce();
     await this.maybeCaptureCookies();
     return this.containerFetch(request, BRIDGE_PORT);
+  }
+
+  private async waitForBridgePort(timeoutMs = 25_000): Promise<boolean> {
+    if (Date.now() < this.bridgeReadyUntil) return true;
+    if (!this.bridgeWaitPromise) {
+      this.bridgeWaitPromise = this.pollBridgePort(timeoutMs).finally(() => {
+        this.bridgeWaitPromise = undefined;
+      });
+    }
+    return this.bridgeWaitPromise;
+  }
+
+  private async pollBridgePort(timeoutMs: number): Promise<boolean> {
+    const started = Date.now();
+    let lastError = "";
+    while (Date.now() - started < timeoutMs) {
+      try {
+        const resp = await this.containerFetch(new Request("http://bridge/healthz"), BRIDGE_PORT);
+        if (resp.ok) {
+          this.bridgeReadyUntil = Date.now() + 15_000;
+          return true;
+        }
+        lastError = `status ${resp.status}`;
+      } catch (e) {
+        lastError = (e as Error).message;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    console.log(`[claude-container] bridge port ${BRIDGE_PORT} not ready after ${timeoutMs}ms: ${lastError || "no response"}`);
+    return false;
   }
 
   /** Re-inject persisted durable login cookies on the first request after a
@@ -114,7 +162,17 @@ function bridgeStub(env: Env) {
   // earlier cache held stale cookies and the onStart restore crash-looped the
   // container — both removed). Bumping this name forces a fresh container/storage;
   // only do that to recover a wedged instance, not as routine iteration.
-  return durableObjectStub(env.CLAUDE_BRIDGE, "primary-weur-keyless1", { locationHint: "weur" });
+  return durableObjectStub(env.CLAUDE_BRIDGE, "primary-weur-keyless2", { locationHint: "weur" });
+}
+
+function bridgeUnavailableResponse(detail: string): Response {
+  return new Response(JSON.stringify({ error: "claude bridge unavailable", detail }), {
+    status: 503,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+    },
+  });
 }
 
 // Auth model A: cache the container's claude.ai cookies (incl. cf_clearance +
@@ -166,10 +224,12 @@ export default {
     if (denied) return denied;
 
     const url = canonicalizeChallengeRedirectUrl(new URL(request.url));
+    const requestTag = `${request.method} ${url.pathname}`;
 
     // 1. bridge transport + health → container
     if (url.pathname === "/bridge" || url.pathname === "/healthz") {
-      return bridgeStub(env).fetch(request);
+      console.log(`[claude-worker] bridge route ${requestTag}`);
+      return bridgeFetch(env, request, requestTag);
     }
 
     // 2. generated bridge assets
@@ -178,7 +238,8 @@ export default {
     // boot args (real --desktop-* the main passed to the SPA view) from container
     if (url.pathname === "/__bridge/boot") {
       const u = new URL(request.url); u.pathname = "/boot"; u.search = "";
-      return bridgeStub(env).fetch(new Request(u.toString(), request));
+      console.log(`[claude-worker] bridge boot ${requestTag}`);
+      return bridgeFetch(env, new Request(u.toString(), request), requestTag);
     }
     // Diagnostics: gated by the Access check above (single allowlisted identity).
     // Maps /__bridge/debug-* → /debug-* on the bridge (reachable only via this
@@ -188,11 +249,17 @@ export default {
         "/__bridge/debug-rpc": "/debug-rpc",
         "/__bridge/debug-pty": "/debug-pty",
         "/__bridge/debug-session": "/debug-session",
+        "/__bridge/debug-clientlog": "/debug-clientlog",
+        "/__bridge/clientlog": "/clientlog",
+        "/__bridge/bridge-health": "/bridge-healthz",
+        "/__bridge/container-health": "/healthz",
+        "/__bridge/mount-status": "/mount-status",
       };
       const target = debugMap[url.pathname];
       if (target) {
         const u = new URL(request.url); u.pathname = target;
-        return bridgeStub(env).fetch(new Request(u.toString(), request));
+        console.log(`[claude-worker] bridge debug ${requestTag} -> ${target}`);
+        return bridgeFetch(env, new Request(u.toString(), request), requestTag);
       }
     }
 
@@ -222,6 +289,18 @@ export default {
   },
 };
 
+async function bridgeFetch(env: Env, request: Request, tag: string): Promise<Response> {
+  const started = Date.now();
+  try {
+    const resp = await bridgeStub(env).fetch(request);
+    console.log(`[claude-worker] ${tag} -> ${resp.status} (${Date.now() - started}ms)`);
+    return resp;
+  } catch (e) {
+    console.log(`[claude-worker] ${tag} bridge error after ${Date.now() - started}ms: ${(e as Error).message}`);
+    throw e;
+  }
+}
+
 // Tunnel an /api/* request through the container's claude.ai renderer.
 async function tunnelThroughContainer(request: Request, url: URL, env: Env): Promise<Response> {
   // Forward the app's own request headers. The real desktop completion sends
@@ -245,19 +324,25 @@ async function tunnelThroughContainer(request: Request, url: URL, env: Env): Pro
   const isCompletion = /\/completion(2)?($|\?)|retry_completion/.test(url.pathname);
   if (isCompletion) console.log(`[tunnel] COMPLETION req ${request.method} ${url.pathname} accept=${request.headers.get("accept")} bodyLen=${bodyB64?.length || 0} hdrs=${Object.keys(fwdHeaders).join(",")}`);
 
-  // NOTE: SSE (chat completions) goes through the SAME buffered /proxy path, which
-  // runs the fetch in the REAL renderer (passes Cloudflare; a Node-side fetch is
-  // 403'd because cf_clearance is bound to the browser's TLS fingerprint). The
-  // renderer buffers the full SSE and we relay it with content-type preserved, so
-  // fetch-event-source parses it (non-incremental, but functional). Incremental
-  // streaming would require the renderer to relay chunks (future work).
+  // SSE (chat completions) uses /proxy-stream so the response reaches the
+  // browser incrementally. Other API requests use /proxy, which runs the fetch in
+  // the real renderer session and returns a buffered body.
   let r: Response;
+  const wantsStream = /\btext\/event-stream\b/i.test(request.headers.get("accept") || "");
   try {
-    r = await bridgeStub(env).fetch("https://bridge.internal/proxy", {
+    const target = wantsStream ? "https://bridge.internal/proxy-stream" : "https://bridge.internal/proxy";
+    if (isCompletion) console.log(`[tunnel] COMPLETION target=${wantsStream ? "proxy-stream" : "proxy-buffered"}`);
+    r = await bridgeStub(env).fetch(target, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(spec),
     });
   } catch (e) {
     return new Response(JSON.stringify({ error: "bridge unreachable", detail: String(e) }), { status: 502, headers: { "content-type": "application/json" } });
+  }
+  if (wantsStream) {
+    const headers = new Headers(r.headers);
+    for (const h of ["content-encoding", "content-length", "transfer-encoding", "connection"]) headers.delete(h);
+    if (isCompletion) console.log(`[tunnel] COMPLETION stream result status=${r.status} ct=${headers.get("content-type")}`);
+    return new Response(r.body, { status: r.status, headers });
   }
   if (!r.ok) { if (isCompletion) console.log(`[tunnel] COMPLETION proxy-http FAILED status=${r.status}`); return new Response(JSON.stringify({ error: "tunnel failed", status: r.status }), { status: 502, headers: { "content-type": "application/json" } }); }
   let j = (await r.json()) as { status?: number; headers?: Record<string, string>; bodyB64?: string; url?: string; error?: string };

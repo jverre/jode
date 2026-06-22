@@ -105,7 +105,7 @@ RUN chmod +x /opt/cloudflare/mount-workspace.sh
 # build cache keys off the Dockerfile, so a COPY'd-file edit alone can be reused
 # as an unchanged image and never roll the running container. This ENV makes the
 # change visible to that cache. (keyless = removed the BRIDGE_KEY gate.)
-ENV JODE_BRIDGE_REV=keyless-1
+ENV JODE_BRIDGE_REV=keyless-3
 COPY bridge/ /opt/bridge/
 
 ENV CLAUDE_REHOST_FORCE_PLATFORM=linux

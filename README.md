@@ -42,8 +42,12 @@ npm run dev              # deploy selector + hosted agents, then launch desktop
 JODE_SKIP_DEPLOY=1 npm run dev
 npm run dry-run          # validate selector + hosted agents
 npm run deploy           # deploy selector + hosted agents
+JODE_CLOUD_CONCURRENCY=2 npm run deploy
 npm run build            # build desktop app
+npm run logs:claude      # Cloudflare logs for Claude Code
 ```
+
+Cloud deploy and dry-run run apps in parallel by default.
 
 ## Repo
 

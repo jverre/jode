@@ -11,6 +11,10 @@
     "dev": "node tools/dev.mjs",
     "build": "npm run build --workspace @jode/desktop",
     "deploy": "node tools/cloud-stack.mjs deploy",
-    "dry-run": "node tools/cloud-stack.mjs dry-run"
+    "dry-run": "node tools/cloud-stack.mjs dry-run",
+    "logs:selector": "npm run tail --workspace @jode/selector",
+    "logs:claude": "npm run tail --workspace @jode/claude-code",
+    "logs:codex": "npm run tail --workspace @jode/codex",
+    "logs:opencode": "npm run tail --workspace @jode/opencode"
   }
 }

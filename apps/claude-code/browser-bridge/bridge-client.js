@@ -52,6 +52,7 @@
   var backoff = 250;
   var warned = new Set();
   var CALL_TIMEOUT = 20000;
+  var nativeWindowOpen = window.open ? window.open.bind(window) : null;
 
   function connect() {
     try { ws = new WebSocket(WS_URL); }
@@ -87,6 +88,10 @@
       return;
     }
     if (msg.t === "push") {
+      if (msg.channel === "__bridge:open-external") {
+        handleOpenInBrowser((msg.args && msg.args[0]) || "");
+        return;
+      }
       // refresh store cache on _$store$_update pushes
       if (/\.\$store\$\.update$/.test(msg.logical || logicalOf(msg.channel))) {
         var k = storeKeyOfUpdate(msg.channel);
@@ -104,6 +109,47 @@
     var fakeEvent = { senderId: 0, ports: [] };
     set.forEach(function (fn) { try { fn.apply(null, [fakeEvent].concat(args)); } catch (e) { console.error(LOGPREFIX, "listener error", channel, e); } });
   }
+
+  // ── secondary-window / external-link interception ─────────────────────────
+  // OAuth and SSO flows ask Electron to open a secondary browser window. In this
+  // hosted split, the container is headless, so open those URLs in the user's
+  // real browser and fall back to a clickable prompt if the popup is blocked.
+  function handleOpenInBrowser(url) {
+    if (!/^(https?:|mailto:)/i.test(String(url || ""))) return false;
+    log("open-in-browser intercepted:", url);
+    var w = null;
+    try { w = nativeWindowOpen ? nativeWindowOpen(url, "_blank", "noopener") : null; } catch (e) {}
+    if (!w) showOpenLinkOverlay(url);
+    return true;
+  }
+  function showOpenLinkOverlay(url) {
+    try {
+      var prev = document.getElementById("__bridge_open_link__");
+      if (prev) prev.remove();
+      var box = document.createElement("div");
+      box.id = "__bridge_open_link__";
+      box.style.cssText = "position:fixed;right:16px;bottom:16px;z-index:2147483647;background:#1a1a1a;color:#fff;padding:14px 16px;border-radius:10px;font:13px/1.5 system-ui,sans-serif;box-shadow:0 4px 24px rgba(0,0,0,.4);max-width:340px;display:flex;gap:12px;align-items:center";
+      var a = document.createElement("a");
+      a.href = url; a.target = "_blank"; a.rel = "noopener";
+      a.textContent = "Continue sign-in in your browser";
+      a.style.cssText = "color:#7dd3fc;text-decoration:underline;word-break:break-word";
+      a.addEventListener("click", function () { setTimeout(function () { box.remove(); }, 500); });
+      var x = document.createElement("button");
+      x.textContent = "x";
+      x.style.cssText = "background:none;border:none;color:#999;font-size:18px;cursor:pointer;padding:0";
+      x.addEventListener("click", function () { box.remove(); });
+      box.appendChild(a); box.appendChild(x);
+      (document.body || document.documentElement).appendChild(box);
+      setTimeout(function () { box.remove(); }, 120000);
+    } catch (e) { log("overlay failed; url:", url); }
+  }
+  try {
+    window.open = function (url, target, features) {
+      var w = nativeWindowOpen ? nativeWindowOpen(url, target, features) : null;
+      if (!w && /^(https?:|mailto:)/i.test(String(url || ""))) showOpenLinkOverlay(url);
+      return w;
+    };
+  } catch (e) {}
 
   // Electron's ipcRenderer uses structured clone, which PRESERVES `undefined`
   // (incl. nested + non-trailing). JSON turns array `undefined`→`null` and drops
@@ -223,7 +269,7 @@
     contextBridge: contextBridge,
     ipcRenderer: ipcRenderer,
     webFrame: webFrame,
-    shell: { openExternal: function (u) { try { window.open(u, "_blank", "noopener"); } catch (e) {} return Promise.resolve(); } },
+    shell: { openExternal: function (u) { handleOpenInBrowser(u); return Promise.resolve(); } },
     clipboard: window.navigator && navigator.clipboard ? {
       writeText: function (t) { return navigator.clipboard.writeText(t); },
       readText: function () { return navigator.clipboard.readText(); },

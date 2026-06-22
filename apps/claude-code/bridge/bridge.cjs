@@ -46,6 +46,7 @@ const wcState = new Map(); // wcId -> { handle:Map, on:Map, wc }
 let mainViewId = null;
 let bootArgv = null; // the main view's additionalArguments (--desktop-features=…)
 let syncSnapshot = {}; // logical sendSync channel -> {error,result} envelope (replayed by the browser)
+const bootWaiters = new Set();
 
 // the 15 synchronous channels (sendSync) — preload reads {error,result} from them
 function isSyncChannel(logical) {
@@ -89,6 +90,25 @@ try { require("node:fs").mkdirSync(WORKSPACE, { recursive: true }); } catch {}
   log(`patched electron.dialog → web-equivalent (workspace=${WORKSPACE})`);
 })();
 
+// The real main process opens OAuth/help links with shell.openExternal. In a
+// headless container that URL would vanish into the virtual display, so relay it
+// to the browser bridge and let the user's actual browser open it.
+(function patchShellOpenExternal() {
+  const sh = electron.shell;
+  if (!sh || typeof sh.openExternal !== "function") return;
+  const original = sh.openExternal.bind(sh);
+  sh.openExternal = async (url, options) => {
+    const value = String(url || "");
+    if (/^(https?:|mailto:)/i.test(value)) {
+      log(`openExternal relayed to browser: ${value.slice(0, 180)}`);
+      fanoutPush("__bridge:open-external", [value]);
+      return;
+    }
+    return original(url, options);
+  };
+  log("patched electron.shell.openExternal → browser relay");
+})();
+
 function logicalOf(c) {
   return String(c)
     .replace(/^\$eipc_message\$_[0-9a-f-]+_\$_/, "")
@@ -101,9 +121,37 @@ function logicalOf(c) {
 // GET /debug-rpc so failures (esp. arg-validation) are inspectable on
 // demand. Also logged to stdout (visible via `wrangler tail`).
 const recentRpc = [];
+const recentClientLogs = [];
 function preview(v) {
   try { const s = JSON.stringify(v); return s && s.length > 600 ? s.slice(0, 600) + "…" : s; }
   catch { return "[unserializable]"; }
+}
+function ms_() {
+  return ms();
+}
+function isBootReady() {
+  return bootArgv != null && Object.keys(syncSnapshot || {}).length > 0;
+}
+function notifyBootWaiters() {
+  if (!isBootReady()) return;
+  for (const resolve of bootWaiters) {
+    try { resolve(true); } catch {}
+  }
+  bootWaiters.clear();
+}
+function waitForBootReady(timeoutMs) {
+  if (isBootReady()) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const done = (ready) => {
+      clearTimeout(timer);
+      resolve(ready);
+    };
+    const timer = setTimeout(() => {
+      bootWaiters.delete(done);
+      resolve(false);
+    }, timeoutMs);
+    bootWaiters.add(done);
+  });
 }
 function recordRpc(msg, ok, value, error, ms) {
   try {
@@ -211,6 +259,7 @@ electron.app.on("web-contents-created", (_e, wc) => {
     syncSnapshot = snap;
     const withData = Object.values(snap).filter((e) => e && e.result !== undefined && e.result !== false && JSON.stringify(e.result) !== "{}").length;
     log(`built sync snapshot: ${Object.keys(snap).length} channels (${withData} with non-trivial data)`);
+    notifyBootWaiters();
   };
   // Auto-heal main-process auth: the browser's tunneled login sets claude.ai
   // session cookies in THIS renderer's session, but the container app loaded
@@ -342,6 +391,7 @@ function announceReady() {
   const channels = st ? [...st.handle.keys()].map(logicalOf).sort() : [];
   const frame = JSON.stringify({ t: "ready", count: channels.length, channels });
   for (const ws of clients) { if (ws.readyState === WS.OPEN) { try { ws.send(frame); } catch {} } }
+  notifyBootWaiters();
 }
 
 // ── HTTP + WS server ─────────────────────────────────────────────────────────
@@ -494,12 +544,42 @@ const server = http.createServer(async (req, res) => {
     });
     return;
   }
+  if (reqUrl && reqUrl.pathname === "/clientlog") {
+    let chunks = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", () => {
+      let row;
+      try { row = JSON.parse(Buffer.concat(chunks).toString() || "{}"); }
+      catch { row = { source: "client", error: "bad json" }; }
+      const saved = {
+        at: ms_(),
+        source: String(row.source || "client").slice(0, 80),
+        dir: String(row.dir || "log").slice(0, 40),
+        channel: String(row.channel || "").slice(0, 160),
+        value: String(row.value || "").slice(0, 800),
+        ok: row.ok !== false,
+        error: row.error ? String(row.error).slice(0, 1200) : undefined,
+      };
+      recentClientLogs.push(saved);
+      if (recentClientLogs.length > 120) recentClientLogs.shift();
+      log(`[clientlog] ${saved.dir} ${saved.channel} ok=${saved.ok} value=${saved.value.slice(0, 180)} error=${saved.error ? saved.error.slice(0, 180) : "none"}`);
+      res.writeHead(204, { "cache-control": "no-store" });
+      res.end();
+    });
+    return;
+  }
   if (req.url && req.url.startsWith("/boot")) {
     // The browser sync-fetches this BEFORE running the preload, to populate
     // process.argv with the real --desktop-* args the preload parses.
+    const ready = await waitForBootReady(Number(process.env.BRIDGE_BOOT_TIMEOUT_MS || 25000));
+    if (ready) {
+      log(`[boot] ready; argv=${bootArgv.length} syncCount=${Object.keys(syncSnapshot || {}).length}`);
+    } else {
+      log(`[boot] timed out waiting for readiness; bootArgv=${!!bootArgv} syncCount=${Object.keys(syncSnapshot || {}).length} mainViewId=${mainViewId}`);
+    }
     res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
     res.end(JSON.stringify({
-      ready: bootArgv != null,
+      ready,
       argv: bootArgv || ["claude"],
       appHost: APP_HOST,
       sync: syncSnapshot, // {logical: {error,result}} for the 15 sendSync channels
@@ -513,6 +593,10 @@ const server = http.createServer(async (req, res) => {
       ok: true, electronReady: electron.app.isReady(), mainViewId,
       handlerCount: st ? st.handle.size : 0, onCount: st ? st.on.size : 0,
       clients: clients.size, uptimeMs: ms(),
+      bootReady: isBootReady(),
+      bootArgvReady: bootArgv != null,
+      syncCount: Object.keys(syncSnapshot || {}).length,
+      clientLogCount: recentClientLogs.length,
     }));
     return;
   }
@@ -521,6 +605,11 @@ const server = http.createServer(async (req, res) => {
     const rows = onlyErr ? recentRpc.filter((r) => !r.ok) : recentRpc;
     res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
     res.end(JSON.stringify({ count: rows.length, rpc: rows.slice(-60) }, null, 2));
+    return;
+  }
+  if (reqUrl && reqUrl.pathname === "/debug-clientlog") {
+    res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+    res.end(JSON.stringify({ count: recentClientLogs.length, logs: recentClientLogs.slice(-80) }, null, 2));
     return;
   }
   // GET /debug-pty — node-pty self-test (#5 verification). Spawns a real
